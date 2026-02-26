@@ -1,0 +1,20 @@
+{
+  "name": "dnd-shorts-pipeline",
+  "version": "0.1.0",
+  "description": "D&D Zoom transcript → highlight moments → ASCII animations → Premiere-ready export",
+  "type": "module",
+  "scripts": {
+    "analyze": "node bin/analyze.js",
+    "export": "node bin/export.js",
+    "pipeline": "node bin/pipeline.js"
+  },
+  "bin": {
+    "analyze": "bin/analyze.js",
+    "export": "bin/export.js",
+    "pipeline": "bin/pipeline.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "puppeteer": "^24.0.0"
+  }
+}
