@@ -43,31 +43,57 @@ export function parseVTT(filePath) {
   while (i < lines.length && lines[i].trim() === '') i++;
 
   const cues = [];
+  let autoId = 0;
 
   while (i < lines.length) {
     // Skip blank lines
     if (lines[i].trim() === '') { i++; continue; }
 
-    // Expect cue ID (numeric)
-    const cueId = parseInt(lines[i].trim());
-    if (isNaN(cueId)) { i++; continue; }
-    i++;
+    // Try to parse: either "cueId\ntimestamp" or just "timestamp" (no cue ID)
+    const line = lines[i].trim();
 
-    // Expect timestamp line
-    if (i >= lines.length) break;
-    const tsMatch = lines[i].match(/^(\d+:\d+:\d+\.\d+)\s*-->\s*(\d+:\d+:\d+\.\d+)/);
-    if (!tsMatch) { i++; continue; }
-    const start = parseTimestamp(tsMatch[1]);
-    const end = parseTimestamp(tsMatch[2]);
-    i++;
+    let cueId;
+    let tsLine;
 
-    // Collect content lines until blank line or next cue
+    // Check if current line is a timestamp
+    const directTsMatch = line.match(/^(\d+:\d+:\d+\.\d+)\s*-->\s*(\d+:\d+:\d+\.\d+)/);
+
+    if (directTsMatch) {
+      // No cue ID — auto-caption format (Zoom .cc.vtt or similar)
+      autoId++;
+      cueId = autoId;
+      tsLine = directTsMatch;
+      i++;
+    } else {
+      // Try numeric cue ID followed by timestamp on next line
+      const numericId = parseInt(line);
+      if (isNaN(numericId)) { i++; continue; }
+      cueId = numericId;
+      autoId = numericId;
+      i++;
+
+      if (i >= lines.length) break;
+      tsLine = lines[i].match(/^(\d+:\d+:\d+\.\d+)\s*-->\s*(\d+:\d+:\d+\.\d+)/);
+      if (!tsLine) { i++; continue; }
+      i++;
+    }
+
+    const start = parseTimestamp(tsLine[1]);
+    const end = parseTimestamp(tsLine[2]);
+
+    // Collect content lines until blank line or next timestamp/cue
     const contentLines = [];
     while (i < lines.length && lines[i].trim() !== '') {
+      // Stop if we hit a timestamp line (next cue without blank separator)
+      if (lines[i].match(/^\d+:\d+:\d+\.\d+\s*-->\s*\d+:\d+:\d+\.\d+/)) break;
+      // Stop if we hit a numeric cue ID followed by a timestamp
+      if (/^\d+$/.test(lines[i].trim()) && i + 1 < lines.length &&
+          lines[i + 1].match(/^\d+:\d+:\d+\.\d+\s*-->\s*\d+:\d+:\d+\.\d+/)) break;
       contentLines.push(lines[i]);
       i++;
     }
     const fullText = contentLines.join(' ').trim();
+    if (!fullText) continue;
 
     // Parse speaker from "Speaker Name: dialogue text"
     const speakerMatch = fullText.match(/^(.+?):\s+(.+)$/);

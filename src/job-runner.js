@@ -93,10 +93,24 @@ export async function runAnalysis(sessionId) {
     const parsed = parseVTT(session.vttPath);
     session.parsedSession = parsed;
 
+    // Validate we got actual content
+    if (!parsed.cues || parsed.cues.length === 0) {
+      throw new Error(
+        'VTT file parsed but contained 0 dialogue cues. ' +
+        'Make sure this is a Zoom transcript VTT file (not a caption-only or empty file).'
+      );
+    }
+
+    if (parsed.cues.length < 10) {
+      console.warn(`Warning: Only ${parsed.cues.length} cues found — transcript may be too short for meaningful highlights.`);
+    }
+
+    console.log(`Parsed ${parsed.cues.length} cues, ${parsed.speakers.length} speakers, duration ${parsed.duration}`);
+
     const sessionDataPath = join(session.outDir, 'session-data', 'session.json');
     writeFileSync(sessionDataPath, JSON.stringify(parsed, null, 2));
 
-    session.progress = { message: 'Finding highlight moments...', percent: 30 };
+    session.progress = { message: `Finding highlight moments (${parsed.cues.length} cues)...`, percent: 30 };
     saveState(session);
 
     // Find highlights
