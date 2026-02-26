@@ -28,15 +28,15 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(join(__dirname, 'public')));
 
-// File upload
+// File upload — accept .vtt by filename (browsers send various mimetypes)
 const upload = multer({
   dest: join(__dirname, 'uploads'),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    if (file.originalname.endsWith('.vtt') || file.mimetype === 'text/vtt') {
+    if (file.originalname.toLowerCase().endsWith('.vtt')) {
       cb(null, true);
     } else {
-      cb(new Error('Only .vtt files are accepted'));
+      cb(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'Only .vtt files are accepted'));
     }
   },
 });
@@ -52,28 +52,36 @@ app.use('/library', express.static(join(__dirname, 'library')));
 // ═══════════════════════════════════════
 
 // Upload VTT and start analysis
-app.post('/api/sessions', upload.single('vtt'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No VTT file uploaded' });
+app.post('/api/sessions', (req, res) => {
+  upload.single('vtt')(req, res, async (err) => {
+    if (err) {
+      console.error('Upload error:', err.message);
+      return res.status(400).json({ error: err.message || 'Upload failed' });
     }
 
-    const userContext = req.body.context || '';
-    const session = createSession(req.file.path, userContext);
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No VTT file uploaded' });
+      }
 
-    // Start analysis in background
-    runAnalysis(session.id).catch(err => {
-      console.error(`Analysis failed for session ${session.id}:`, err.message);
-    });
+      const userContext = req.body.context || '';
+      const session = createSession(req.file.path, userContext);
 
-    res.json({
-      id: session.id,
-      stage: session.stage,
-      message: 'Analysis started',
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+      // Start analysis in background
+      runAnalysis(session.id).catch(err => {
+        console.error(`Analysis failed for session ${session.id}:`, err.message);
+      });
+
+      res.json({
+        id: session.id,
+        stage: session.stage,
+        message: 'Analysis started',
+      });
+    } catch (err) {
+      console.error('Session creation error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
 });
 
 // Get session status
