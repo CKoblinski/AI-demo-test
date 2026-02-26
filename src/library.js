@@ -48,16 +48,28 @@ export function getAnimationHtml(id) {
 }
 
 /**
- * Find the best matching library animation for a moment.
- * Returns { decision: 'REUSE'|'ADAPT'|'CREATE', match: animMeta|null, reason: string }
+ * Find the best matching library animation for an animation concept.
+ *
+ * Works with both:
+ * - Full highlight objects (legacy): { type, tags, suggestedAnimationType }
+ * - Animation sequence items (new): { suggestedType, concept, emotion }
+ *
+ * @param {object} item - Either a highlight or animation sequence item
+ * @param {string} [parentType] - The parent highlight's moment type (for sequence items)
+ * @returns {{ decision: string, match: object|null, reason: string }}
  */
-export function findMatch(moment) {
+export function findMatch(item, parentType = null) {
   const library = loadLibrary();
   if (library.animations.length === 0) {
     return { decision: 'CREATE', match: null, reason: 'Library is empty' };
   }
 
-  // Score each animation against the moment
+  // Determine the moment type to match against
+  const momentType = item.type || item.suggestedType || parentType;
+  // Determine theme keywords to match against
+  const themeSource = item.suggestedAnimationType || item.suggestedType || item.concept || '';
+
+  // Score each animation against the item
   let bestScore = 0;
   let bestMatch = null;
 
@@ -65,22 +77,29 @@ export function findMatch(moment) {
     let score = 0;
 
     // Moment type match (strongest signal)
-    if (anim.momentTypes && anim.momentTypes.includes(moment.type)) {
+    if (momentType && anim.momentTypes && anim.momentTypes.includes(momentType)) {
       score += 50;
     }
 
-    // Tag overlap
-    if (anim.tags && moment.tags) {
-      const overlap = anim.tags.filter(t => moment.tags.includes(t)).length;
+    // Tag overlap (works when item has tags — mainly for full highlights)
+    if (anim.tags && item.tags) {
+      const overlap = anim.tags.filter(t => item.tags.includes(t)).length;
       score += overlap * 10;
     }
 
-    // Theme keyword match
-    if (anim.theme && moment.suggestedAnimationType) {
+    // Theme keyword match — check against concept/suggestedType
+    if (anim.theme && themeSource) {
       const themeWords = anim.theme.toLowerCase().split(/[\/\s]+/);
-      const momentWords = moment.suggestedAnimationType.toLowerCase().split(/[\s,]+/);
-      const themeOverlap = themeWords.filter(w => momentWords.some(mw => mw.includes(w))).length;
+      const sourceWords = themeSource.toLowerCase().split(/[\s,_]+/);
+      const themeOverlap = themeWords.filter(w => sourceWords.some(sw => sw.includes(w) || w.includes(sw))).length;
       score += themeOverlap * 15;
+    }
+
+    // Concept keyword match — check animation name/tags against concept text
+    if (anim.tags && item.concept) {
+      const conceptWords = item.concept.toLowerCase().split(/[\s,]+/);
+      const tagOverlap = anim.tags.filter(t => conceptWords.some(cw => cw.includes(t) || t.includes(cw))).length;
+      score += tagOverlap * 8;
     }
 
     if (score > bestScore) {
@@ -90,11 +109,10 @@ export function findMatch(moment) {
   }
 
   if (bestScore >= 50) {
-    // Strong match — check if it's exact enough to reuse
     if (bestScore >= 60) {
       return { decision: 'REUSE', match: bestMatch, reason: `Strong match: ${bestMatch.name} (score: ${bestScore})` };
     }
-    return { decision: 'ADAPT', match: bestMatch, reason: `Partial match: ${bestMatch.name} — adapt for this moment (score: ${bestScore})` };
+    return { decision: 'ADAPT', match: bestMatch, reason: `Partial match: ${bestMatch.name} — adapt for this concept (score: ${bestScore})` };
   }
 
   return { decision: 'CREATE', match: null, reason: `No good library match (best score: ${bestScore})` };

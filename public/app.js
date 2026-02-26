@@ -140,7 +140,7 @@ function updateUI(session) {
   }
 }
 
-// ── Plan Review (Screen 3) ──
+// ── Plan Review (Screen 3) — Expandable Clip Cards ──
 
 function renderPlan(session) {
   const container = document.getElementById('segments-plan');
@@ -150,7 +150,8 @@ function renderPlan(session) {
 
   session.segments.forEach((seg, i) => {
     const card = document.createElement('div');
-    card.className = 'segment-card';
+    card.className = 'clip-card';
+    card.id = `plan-clip-${i}`;
 
     const startMin = Math.floor((seg.startTime || 0) / 60);
     const startSec = Math.floor((seg.startTime || 0) % 60);
@@ -158,35 +159,98 @@ function renderPlan(session) {
     const endSec = Math.floor((seg.endTime || 0) % 60);
     const timeStr = `${pad(startMin)}:${pad(startSec)} - ${pad(endMin)}:${pad(endSec)}`;
 
+    const animations = seg.animations || [];
+    const decisionSummary = animations.map(a => a.decision).join(' / ');
+
+    // Build animation concept cards
+    let animCardsHtml = '';
+    for (const anim of animations) {
+      let previewHtml = '';
+      let libraryLabel = '';
+
+      if (anim.decision === 'REUSE' && anim.libraryMatch) {
+        // Lazy load: data-src set on expand
+        previewHtml = `<iframe class="library-preview lazy-iframe"
+          data-src="/library/${anim.libraryMatch.id}/animation.html"
+          sandbox="allow-scripts"></iframe>`;
+        libraryLabel = `<div class="library-preview-label">Reusing: ${esc(anim.libraryMatch.name)}</div>`;
+      } else if (anim.decision === 'ADAPT' && anim.libraryMatch) {
+        previewHtml = `<iframe class="library-preview lazy-iframe"
+          data-src="/library/${anim.libraryMatch.id}/animation.html"
+          sandbox="allow-scripts"></iframe>`;
+        libraryLabel = `<div class="library-preview-label">Adapting: ${esc(anim.libraryMatch.name)} &mdash; ${esc(anim.reason || '')}</div>`;
+      }
+
+      animCardsHtml += `
+        <div class="anim-concept">
+          <div class="anim-concept-header">
+            <div class="anim-order">${anim.order}</div>
+            <div class="anim-concept-title">${esc(anim.concept)}</div>
+            <span class="decision-badge decision-badge-${anim.decision}">${anim.decision}</span>
+          </div>
+          <div class="anim-description">
+            <strong>Emotion:</strong> ${esc(anim.emotion || 'N/A')}
+            ${anim.durationWeight ? ` &middot; <strong>Weight:</strong> ${Math.round(anim.durationWeight * 100)}%` : ''}
+          </div>
+          ${previewHtml}
+          ${libraryLabel}
+        </div>
+      `;
+    }
+
     card.innerHTML = `
-      <div class="segment-header">
+      <div class="clip-header" onclick="toggleClip(${i})">
         <div class="segment-number">${i + 1}</div>
         <div class="segment-title">${esc(seg.title)}</div>
-        <span class="badge badge-${seg.type}">${seg.type.replace('_', ' ')}</span>
+        <span class="badge badge-${seg.type}">${(seg.type || '').replace('_', ' ')}</span>
+        <span style="font-size:0.75rem;color:var(--text-dim);margin-left:auto">${timeStr}</span>
+        <span class="clip-expand-icon">&#9654;</span>
       </div>
-      <div class="segment-meta">
-        <span>${timeStr}</span>
-        <span>~${seg.estimatedClipDuration || 20}s clip</span>
-        <span class="segment-decision decision-${seg.decision}">${seg.decision}</span>
-      </div>
-      <div class="segment-description">
+      <div class="clip-summary">
         ${esc(seg.emotionalArc || '')}
+        <br><span style="font-size:0.8rem">${animations.length} animation${animations.length !== 1 ? 's' : ''}: ${decisionSummary}</span>
       </div>
-      ${seg.whyItsGood ? `<div class="segment-description" style="color:var(--text-dim)">${esc(seg.whyItsGood)}</div>` : ''}
-      <div class="segment-concept">
-        <strong>Animation:</strong> ${esc(seg.concept)}
-        ${seg.libraryMatch ? `<br><strong>Based on:</strong> ${esc(seg.libraryMatch.name)}` : ''}
-        ${seg.reason ? `<br><em style="color:var(--text-dim)">${esc(seg.reason)}</em>` : ''}
+      <div class="clip-body">
+        <div class="clip-animations">
+          ${animCardsHtml}
+        </div>
+        ${seg.whyItsGood ? `<div class="clip-why">${esc(seg.whyItsGood)}</div>` : ''}
       </div>
     `;
 
     container.appendChild(card);
   });
 
+  // Auto-expand the first clip
+  const firstClip = document.querySelector('.clip-card');
+  if (firstClip) {
+    firstClip.classList.add('expanded');
+    loadLazyIframes(firstClip);
+  }
+
   if (session.estimatedMinutes) {
     document.getElementById('time-estimate').textContent =
       `Estimated generation time: ~${session.estimatedMinutes} minutes`;
   }
+}
+
+window.toggleClip = function(index) {
+  const card = document.getElementById(`plan-clip-${index}`);
+  if (!card) return;
+  card.classList.toggle('expanded');
+  // Lazy-load iframes when expanding
+  if (card.classList.contains('expanded')) {
+    loadLazyIframes(card);
+  }
+};
+
+function loadLazyIframes(container) {
+  container.querySelectorAll('.lazy-iframe').forEach(iframe => {
+    if (!iframe.src && iframe.dataset.src) {
+      iframe.src = iframe.dataset.src;
+      iframe.classList.remove('lazy-iframe');
+    }
+  });
 }
 
 // ── Approve ──
@@ -215,7 +279,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   }
 });
 
-// ── Generating (Screen 4) ──
+// ── Generating (Screen 4) — Per-animation status ──
 
 function renderGenerating(session) {
   const container = document.getElementById('segments-progress');
@@ -225,28 +289,37 @@ function renderGenerating(session) {
 
   session.segments.forEach((seg, i) => {
     const card = document.createElement('div');
-    card.className = `segment-card`;
+    card.className = 'segment-card';
 
-    const statusClass = `status-${seg.status}`;
-    const statusText = {
-      pending: 'Waiting...',
-      generating: 'Generating animation...',
-      generated: 'Animation ready',
-      exporting: 'Exporting video...',
-      complete: 'Done!',
-      failed: `Failed: ${seg.error || 'unknown'}`,
-      export_failed: `Export failed: ${seg.error || 'unknown'}`,
-    }[seg.status] || seg.status;
+    const animations = seg.animations || [];
+    let animStatusHtml = '';
+    for (const anim of animations) {
+      const statusClass = `status-${anim.status}`;
+      const statusText = {
+        pending: 'Waiting...',
+        generating: 'Generating...',
+        generated: 'Ready',
+        exporting: 'Exporting...',
+        complete: 'Done',
+        failed: `Failed: ${anim.error || 'unknown'}`,
+        export_failed: `Export failed`,
+      }[anim.status] || anim.status;
+
+      animStatusHtml += `
+        <div class="segment-status ${statusClass}" style="padding-left:38px">
+          <div class="status-dot"></div>
+          <span style="font-size:0.8rem;flex:1">${anim.order}. ${esc(anim.concept).substring(0, 60)}${anim.concept.length > 60 ? '...' : ''}</span>
+          <span style="font-size:0.75rem;color:var(--text-dim)">${statusText}</span>
+        </div>
+      `;
+    }
 
     card.innerHTML = `
       <div class="segment-header">
         <div class="segment-number">${i + 1}</div>
         <div class="segment-title">${esc(seg.title)}</div>
       </div>
-      <div class="segment-status ${statusClass}">
-        <div class="status-dot"></div>
-        <span>${statusText}</span>
-      </div>
+      ${animStatusHtml}
     `;
 
     container.appendChild(card);
@@ -256,7 +329,7 @@ function renderGenerating(session) {
   document.getElementById('gen-message').textContent = session.progress.message;
 }
 
-// ── Results (Screen 5) ──
+// ── Results (Screen 5) — Per-animation previews + reject ──
 
 function renderResults(session) {
   const container = document.getElementById('segments-results');
@@ -269,68 +342,86 @@ function renderResults(session) {
     card.className = 'segment-card';
     card.id = `result-seg-${i}`;
 
-    const hasExport = seg.status === 'complete' && seg.exportFiles;
-    const segPath = seg.segDir || '';
+    const animations = seg.animations || [];
+    let animResultsHtml = '';
 
-    let previewHtml = '';
-    if (seg.status === 'complete' || seg.status === 'generated' || seg.status === 'export_failed') {
-      previewHtml = `<iframe class="preview-frame" src="/api/sessions/${currentSessionId}/segments/${i}/preview" sandbox="allow-scripts"></iframe>`;
-    }
+    animations.forEach((anim, ai) => {
+      let previewHtml = '';
+      if (['complete', 'generated', 'export_failed'].includes(anim.status)) {
+        previewHtml = `<iframe class="preview-frame" style="height:200px;"
+          src="/api/sessions/${currentSessionId}/segments/${i}/animations/${ai}/preview"
+          sandbox="allow-scripts"></iframe>`;
+      }
 
-    let downloadHtml = '';
-    if (hasExport) {
-      downloadHtml = `
-        <div class="download-links">
-          <a href="${segPath}/animation.webm" download>WebM</a>
-          <a href="${segPath}/animation.mp4" download>MP4</a>
-          <a href="${segPath}/peak-frame.png" download>Peak Frame</a>
-          <a href="${segPath}/thumbnail.png" download>Thumbnail</a>
+      const hasExport = anim.status === 'complete' && anim.exportFiles;
+      const animPath = anim.animDir || '';
+      let downloadHtml = '';
+      if (hasExport) {
+        downloadHtml = `
+          <div class="download-links">
+            <a href="${animPath}/animation.webm" download>WebM</a>
+            <a href="${animPath}/animation.mp4" download>MP4</a>
+            <a href="${animPath}/peak-frame.png" download>Peak Frame</a>
+          </div>
+        `;
+      }
+
+      animResultsHtml += `
+        <div class="anim-concept" style="margin-bottom:12px">
+          <div class="anim-concept-header">
+            <div class="anim-order">${anim.order}</div>
+            <div class="anim-concept-title">${esc(anim.concept)}</div>
+            <span class="decision-badge decision-badge-${anim.decision}">${anim.decision}</span>
+          </div>
+          ${previewHtml}
+          ${downloadHtml}
+          <div class="segment-actions" style="margin-top:8px">
+            ${anim.status === 'complete' ? `<button class="btn-danger" onclick="showRejectInput(${i}, ${ai})">Reject</button>` : ''}
+            ${anim.status === 'generating' ? '<span style="color:var(--warning);font-size:0.8rem">Regenerating...</span>' : ''}
+            ${anim.error ? `<span style="color:var(--error);font-size:0.8rem">${esc(anim.error)}</span>` : ''}
+          </div>
+          <div class="reject-input" id="reject-input-${i}-${ai}">
+            <input type="text" placeholder="What should change? (1-2 sentences)" id="reject-text-${i}-${ai}">
+            <button class="btn-danger" onclick="rejectAnimation(${i}, ${ai})">Submit</button>
+          </div>
         </div>
       `;
-    }
+    });
 
     card.innerHTML = `
       <div class="segment-header">
         <div class="segment-number">${i + 1}</div>
         <div class="segment-title">${esc(seg.title)}</div>
-        <span class="badge badge-${seg.type}">${seg.type.replace('_', ' ')}</span>
+        <span class="badge badge-${seg.type}">${(seg.type || '').replace('_', ' ')}</span>
       </div>
-      ${previewHtml}
-      ${downloadHtml}
-      <div class="segment-actions">
-        ${seg.status === 'complete' ? `<button class="btn-danger" onclick="showRejectInput(${i})">Reject</button>` : ''}
-        ${seg.status === 'generating' ? '<span style="color:var(--warning);font-size:0.8rem">Regenerating...</span>' : ''}
-        ${seg.error ? `<span style="color:var(--error);font-size:0.8rem">${esc(seg.error)}</span>` : ''}
-      </div>
-      <div class="reject-input" id="reject-input-${i}">
-        <input type="text" placeholder="What should change? (1-2 sentences)" id="reject-text-${i}">
-        <button class="btn-danger" onclick="rejectSegment(${i})">Submit</button>
-      </div>
+      ${animResultsHtml}
     `;
 
     container.appendChild(card);
   });
 }
 
-window.showRejectInput = function(index) {
-  document.getElementById(`reject-input-${index}`).classList.add('visible');
-  document.getElementById(`reject-text-${index}`).focus();
+window.showRejectInput = function(segIndex, animIndex) {
+  document.getElementById(`reject-input-${segIndex}-${animIndex}`).classList.add('visible');
+  document.getElementById(`reject-text-${segIndex}-${animIndex}`).focus();
 };
 
-window.rejectSegment = async function(index) {
-  const input = document.getElementById(`reject-text-${index}`);
+window.rejectAnimation = async function(segIndex, animIndex) {
+  const input = document.getElementById(`reject-text-${segIndex}-${animIndex}`);
   const rationale = input.value.trim();
   if (!rationale) { input.focus(); return; }
 
   try {
-    const res = await fetch(`/api/sessions/${currentSessionId}/segments/${index}/reject`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rationale }),
-    });
+    const res = await fetch(
+      `/api/sessions/${currentSessionId}/segments/${segIndex}/animations/${animIndex}/reject`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rationale }),
+      }
+    );
 
     if (res.ok) {
-      // Start polling to watch regeneration
       startPolling();
     } else {
       const data = await res.json();

@@ -155,12 +155,32 @@ The canvas is 54 wide × 40 tall (portrait). Use the full height:
   console.log(`  Generating animation: ${concept.substring(0, 60)}...`);
   console.log(`  Model: ${model}`);
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: 16000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
-  });
+  // Rate-limit-aware API call with retry + backoff
+  let response;
+  const maxApiRetries = 3;
+  for (let attempt = 1; attempt <= maxApiRetries; attempt++) {
+    try {
+      response = await client.messages.create({
+        model,
+        max_tokens: 16000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      });
+      break; // success
+    } catch (err) {
+      const isRateLimit = err.status === 429 ||
+        err.message?.includes('rate_limit') ||
+        err.message?.includes('429');
+
+      if (isRateLimit && attempt < maxApiRetries) {
+        const waitSec = Math.min(60 * attempt, 180);
+        console.log(`  Rate limited (attempt ${attempt}/${maxApiRetries}). Waiting ${waitSec}s...`);
+        await sleep(waitSec * 1000);
+        continue;
+      }
+      throw err;
+    }
+  }
 
   let html = response.content
     .filter(block => block.type === 'text')
@@ -224,6 +244,10 @@ function validateAnimationHtml(html) {
 /**
  * Generate with retry on validation failure.
  */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function generateWithRetry(params, maxRetries = 1) {
   let result = await generateAnimation(params);
 

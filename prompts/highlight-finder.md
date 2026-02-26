@@ -37,6 +37,22 @@ A great moment is **self-contained** — a viewer who knows nothing about this c
 - **Punctuation is unreliable.** Sentences may run together or be split oddly.
 - **"haha", "oh my god", "what", short exclamations** are reliable signals of genuine reactions even if transcribed imperfectly.
 - **Speaker names with parentheses** indicate the character name: "Kristin (Bixie)" means the player Kristin is playing a character named Bixie.
+- **If there are no speaker names**, this is an auto-caption transcript. Use context clues (dialogue patterns, content) to identify moments. You may not be able to attribute lines to specific characters — that's okay.
+
+## Animation Sequence
+
+Each highlight needs **2-3 animation beats** that together tell a visual story for the clip. Think of these as tone-poem beats — simple iconic imagery that captures a FEELING, not a literal scene.
+
+- **Beat 1**: The setup or context (what situation are we in?)
+- **Beat 2**: The peak moment (what happened?)
+- **Beat 3**: The aftermath/reaction (what did it feel like?)
+
+Each beat becomes a separate, self-contained ASCII animation file. Together they play sequentially during the clip while the audio tells the story.
+
+**Examples:**
+- "Bixie rolls nat 20, then nat 1" → `[Slot machine spinning to 20]` → `[Gloved hand reaching into golden drawer]` → `[Everything crumbles, cracks spread]`
+- "Vexus gets stabbed" → `[Angry face emerging from shadow]` → `[Two swords drawn from scabbards]` → `[Blood spray across screen]`
+- "Party discovers treasure" → `[Torch illuminating dark doorway]` → `[Chest lid opening, golden glow]` → `[Coins and gems cascading down]`
 
 ## Your output format
 
@@ -52,12 +68,33 @@ Return a JSON array of 2-3 highlights. Each highlight:
   "startTime": 1234.5,
   "endTime": 1278.9,
   "emotionalArc": "Setup: DM describes the dark passage. Build: Bixie says she'll look around. Peak: Nat 20 announced. Payoff: Table erupts, DM reveals what she sees.",
-  "whyItsGood": "1-2 sentences explaining why this would work as a Short. Reference the emotional beat and the universal D&D experience it captures.",
+  "whyItsGood": "1-2 sentences explaining why this would work as a Short.",
   "keyDialogueCueIds": [423, 425, 430, 432, 438, 440],
   "estimatedClipDuration": 28,
   "contextForViewers": "One line of context a viewer would need. Keep it under 15 words.",
-  "suggestedAnimationType": "epic_roll",
-  "animationNotes": "Brief note on what visual would work: e.g., 'Slot machine landing on 20, triumphant burst'"
+  "animationSequence": [
+    {
+      "order": 1,
+      "concept": "Slot machine spinning, digits blur and resolve",
+      "emotion": "anticipation, building tension",
+      "suggestedType": "epic_roll",
+      "durationWeight": 0.35
+    },
+    {
+      "order": 2,
+      "concept": "Golden 20 lands, triumphant burst of light and sparks",
+      "emotion": "triumph, explosion of joy",
+      "suggestedType": "epic_roll",
+      "durationWeight": 0.4
+    },
+    {
+      "order": 3,
+      "concept": "Glowing hand reaches out, treasure materializes",
+      "emotion": "reward, wonder",
+      "suggestedType": "treasure_reward",
+      "durationWeight": 0.25
+    }
+  ]
 }
 ```
 
@@ -66,5 +103,9 @@ Return a JSON array of 2-3 highlights. Each highlight:
 - `startCue` and `endCue` reference cue IDs from the transcript
 - `startTime` and `endTime` are in seconds
 - `estimatedClipDuration` should be 15-45 seconds (the sweet spot for Shorts)
-- `keyDialogueCueIds` are the specific cue IDs that should appear in the final clip — the most essential lines
+- `keyDialogueCueIds` are the specific cue IDs that should appear in the final clip
 - Rank 1 = the single best moment in the session
+- `animationSequence` MUST have 2-3 items per highlight
+- `durationWeight` values should sum to approximately 1.0
+- Each `concept` should be a vivid 1-sentence description of a simple, iconic visual
+- `suggestedType` should reference the moment types table above — this helps match library animations

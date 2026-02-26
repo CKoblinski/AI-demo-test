@@ -5,9 +5,9 @@ import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
   createSession, getSession, listSessions,
-  runAnalysis, runGeneration, regenerateSegment, createSessionZip,
+  runAnalysis, runGeneration, regenerateAnimation, createSessionZip,
 } from './src/job-runner.js';
-import { listAnimations } from './src/library.js';
+import { listAnimations, getAnimationHtml } from './src/library.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -99,7 +99,7 @@ app.get('/api/sessions/:id', (req, res) => {
     estimatedMinutes: session.estimatedMinutes,
   };
 
-  // Include segments when plan is ready
+  // Include segments when plan is ready (nested animations model)
   if (session.segments) {
     response.segments = session.segments.map((s, i) => ({
       index: i,
@@ -112,23 +112,25 @@ app.get('/api/sessions/:id', (req, res) => {
       contextForViewers: s.highlight.contextForViewers,
       estimatedClipDuration: s.highlight.estimatedClipDuration,
       keyDialogue: s.highlight.keyDialogueCueIds ? 'Available' : null,
-      decision: s.decision,
-      concept: s.concept,
-      reason: s.reason,
-      libraryMatch: s.libraryMatch ? {
-        id: s.libraryMatch.id,
-        name: s.libraryMatch.name,
-      } : null,
       status: s.status,
-      error: s.error,
-      exportFiles: s.exportFiles,
       segDir: s.segDir ? s.segDir.replace(resolve(__dirname), '') : null,
+      // Nested animations per clip
+      animations: (s.animations || []).map((a, ai) => ({
+        index: ai,
+        order: a.order,
+        concept: a.concept,
+        emotion: a.emotion,
+        suggestedType: a.suggestedType,
+        durationWeight: a.durationWeight,
+        decision: a.decision,
+        reason: a.reason,
+        libraryMatch: a.libraryMatch ? { id: a.libraryMatch.id, name: a.libraryMatch.name } : null,
+        status: a.status,
+        error: a.error,
+        exportFiles: a.exportFiles,
+        animDir: a.animDir ? a.animDir.replace(resolve(__dirname), '') : null,
+      })),
     }));
-  }
-
-  // Include highlights for plan review
-  if (session.highlights) {
-    response.highlights = session.highlights;
   }
 
   res.json(response);
@@ -154,8 +156,12 @@ app.post('/api/sessions/:id/approve', async (req, res) => {
     approvedAt: new Date().toISOString(),
     segments: session.segments.map(s => ({
       title: s.highlight.title,
-      decision: s.decision,
-      concept: s.concept,
+      animations: s.animations.map(a => ({
+        order: a.order,
+        concept: a.concept,
+        decision: a.decision,
+        libraryMatch: a.libraryMatch ? a.libraryMatch.id : null,
+      })),
     })),
   }, null, 2));
 
@@ -167,12 +173,13 @@ app.post('/api/sessions/:id/approve', async (req, res) => {
   res.json({ message: 'Generation started', stage: 'generating' });
 });
 
-// Reject a segment and regenerate
-app.post('/api/sessions/:id/segments/:index/reject', async (req, res) => {
+// Reject a specific animation within a clip and regenerate
+app.post('/api/sessions/:id/segments/:segIndex/animations/:animIndex/reject', async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
 
-  const index = parseInt(req.params.index);
+  const segIndex = parseInt(req.params.segIndex);
+  const animIndex = parseInt(req.params.animIndex);
   const { rationale } = req.body;
 
   if (!rationale || rationale.trim().length === 0) {
@@ -180,11 +187,28 @@ app.post('/api/sessions/:id/segments/:index/reject', async (req, res) => {
   }
 
   // Start regeneration in background
-  regenerateSegment(session.id, index, rationale).catch(err => {
-    console.error(`Regeneration failed for session ${session.id} segment ${index}:`, err.message);
+  regenerateAnimation(session.id, segIndex, animIndex, rationale).catch(err => {
+    console.error(`Regeneration failed for session ${session.id} seg ${segIndex} anim ${animIndex}:`, err.message);
   });
 
   res.json({ message: 'Regeneration started' });
+});
+
+// Preview a specific animation within a clip
+app.get('/api/sessions/:id/segments/:segIndex/animations/:animIndex/preview', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const seg = session.segments?.[parseInt(req.params.segIndex)];
+  if (!seg) return res.status(404).json({ error: 'Segment not found' });
+
+  const anim = seg.animations?.[parseInt(req.params.animIndex)];
+  if (!anim || !anim.animDir) return res.status(404).json({ error: 'Animation not found' });
+
+  const htmlPath = join(anim.animDir, 'animation.html');
+  if (!existsSync(htmlPath)) return res.status(404).json({ error: 'Animation not yet generated' });
+
+  res.sendFile(htmlPath);
 });
 
 // Download session zip
@@ -205,17 +229,10 @@ app.get('/api/library', (req, res) => {
   res.json(listAnimations());
 });
 
-// Serve animation HTML for iframe preview
-app.get('/api/sessions/:id/segments/:index/preview', (req, res) => {
-  const session = getSession(req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-
-  const seg = session.segments?.[parseInt(req.params.index)];
-  if (!seg || !seg.segDir) return res.status(404).json({ error: 'Segment not found' });
-
-  const htmlPath = join(seg.segDir, 'animation.html');
-  if (!existsSync(htmlPath)) return res.status(404).json({ error: 'Animation not yet generated' });
-
+// Library animation preview (for plan review iframes)
+app.get('/api/library/:id/preview', (req, res) => {
+  const htmlPath = join(__dirname, 'library', req.params.id, 'animation.html');
+  if (!existsSync(htmlPath)) return res.status(404).json({ error: 'Library animation not found' });
   res.sendFile(htmlPath);
 });
 
