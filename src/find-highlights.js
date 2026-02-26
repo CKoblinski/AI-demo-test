@@ -11,11 +11,12 @@ const PROMPT_PATH = join(__dirname, '..', 'prompts', 'highlight-finder.md');
  * Find highlight moments in a parsed D&D session using Claude.
  *
  * @param {object} session - Parsed session data from parse-vtt.js
- * @param {object} options - { apiKey, model }
+ * @param {object} options - { apiKey, model, userContext }
  * @returns {object[]} Array of highlight objects
  */
 export async function findHighlights(session, options = {}) {
   const apiKey = options.apiKey || process.env.ANTHROPIC_API_KEY;
+  const userContext = options.userContext || '';
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY is required. Set it in .env or pass via options.');
   }
@@ -42,7 +43,7 @@ export async function findHighlights(session, options = {}) {
     return `[${c.id}] ${ts} ${c.speaker}: ${c.text}`;
   }).join('\n');
 
-  const userMessage = `## Session Info
+  let userMessage = `## Session Info
 File: ${session.sessionFile}
 Duration: ${session.duration}
 Total cues: ${session.totalCues}
@@ -53,7 +54,18 @@ ${speakerSummary}
 
 ## Segments
 ${session.segments.map(s => `  - ${s.type}: ${Math.floor(s.startTime / 60)}m → ${Math.floor(s.endTime / 60)}m`).join('\n')}
+`;
 
+  if (userContext) {
+    userMessage += `
+## DM Notes (what the DM thinks was important)
+${userContext}
+
+Pay special attention to these notes — the DM knows what mattered. Prioritize moments they mention.
+`;
+  }
+
+  userMessage += `
 ## Transcript (gameplay section only)
 Each line: [cueId] MM:SS Speaker: Text
 

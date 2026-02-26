@@ -253,7 +253,7 @@ export async function exportAnimation(htmlPath, outDir, opts = {}) {
   if (!keepFrames) {
     const pngs = readdirSync(framesDir).filter(f => f.endsWith('.png'));
     for (const f of pngs) unlinkSync(join(framesDir, f));
-    try { require('fs').rmdirSync(framesDir); } catch {}
+    try { const { rmdirSync } = await import('fs'); rmdirSync(framesDir); } catch {}
     console.log(`  Cleaned up ${pngs.length} frame PNGs`);
   } else {
     const pngs = readdirSync(framesDir).filter(f => f.endsWith('.png'));

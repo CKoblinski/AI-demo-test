@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Confrontation</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #050505;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
+                 'SF Mono', 'Consolas', 'Courier New', monospace;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh; padding: 20px;
+    color: #c8b8a8;
+  }
+  h1 { font-size: 1rem; color: #8a2a2a; margin-bottom: 14px; font-weight: 300;
+       letter-spacing: 4px; text-transform: uppercase; opacity: 0.7; }
+  #stage {
+    background: #020202;
+    border: 1px solid #1a0808;
+    border-radius: 12px; padding: 20px 28px;
+    font-size: 14px; line-height: 1.3; white-space: pre;
+    display: flex; align-items: center; justify-content: center;
+    min-width: 520px; min-height: 380px;
+    transition: box-shadow 0.12s ease;
+  }
+  .controls { margin-top: 20px; display: flex; align-items: center; gap: 12px;
+    background: #0a0808; padding: 10px 20px; border-radius: 8px; border: 1px solid #1a0808; }
+  button { background: none; border: 1px solid #3a1a1a; color: #b09080;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 0.85rem; transition: all 0.15s; }
+  button:hover { background: #1a0808; border-color: #c83030; }
+  button.active { background: #6a1a1a; border-color: #c83030; }
+  .slider-group { display: flex; align-items: center; gap: 6px; }
+  .slider-group label { font-size: 0.75rem; color: #5a3030; text-transform: uppercase; letter-spacing: 1px; }
+  input[type="range"] { width: 100px; accent-color: #c83030; }
+  .frame-info { font-size: 0.75rem; color: #5a3030; min-width: 70px; text-align: center; }
+  .mode-toggle { margin-top: 10px; display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<h1>The Confrontation</h1>
+<div id="stage"></div>
+<div class="controls">
+  <button id="playBtn" onclick="togglePlay()">⏸ Pause</button>
+  <button onclick="stepBack()">◀</button>
+  <button onclick="stepForward()">▶</button>
+  <div class="slider-group"><label>Speed</label>
+    <input type="range" id="speed" min="1" max="20" value="5" oninput="updateSpeed()"></div>
+  <div class="slider-group"><label>Frame</label>
+    <input type="range" id="scrubber" min="0" value="0" oninput="scrubTo(this.value)"></div>
+  <div class="frame-info" id="frameInfo">1 / 1</div>
+</div>
+<div class="mode-toggle">
+  <button id="loopBtn" onclick="toggleLoop()">🔁 Loop</button>
+  <button id="bounceBtn" class="active" onclick="toggleBounce()">🔄 Bounce</button>
+</div>
+
+<script>
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  THE CONFRONTATION — Two swords drawn, blood spray        ║
+// ║                                                           ║
+// ║  BOUNCE MODE: 16 frames forward → 16 frames back.        ║
+// ║  Only the first half is authored. Tension builds to       ║
+// ║  peak violence, then bounce reverses it back to dark.     ║
+// ║                                                           ║
+// ║  Sword anatomy (top to bottom when sheathed):             ║
+// ║    POMMEL (visible, sticks out of scabbard)               ║
+// ║    GRIP                                                   ║
+// ║    CROSSGUARD                                             ║
+// ║    BLADE (inside scabbard)                                ║
+// ║    TIP (deepest inside scabbard)                          ║
+// ║                                                           ║
+// ║  Drawing pulls the whole sword UP. The tip exits the      ║
+// ║  scabbard mouth LAST.                                     ║
+// ╚═══════════════════════════════════════════════════════════╝
+
+const W = 48;
+const H = 22;
+
+function srand(seed) { return ((seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; }
+
+// ── GEOMETRY CONSTANTS ──
+const LEFT_X = 14;   // center column of left scabbard
+const RIGHT_X = 33;  // center column of right scabbard
+const SCAB_TOP = 14; // top of scabbard (where the mouth is)
+const SCAB_BOT = 20; // bottom of scabbard (the tip/chape)
+
+// Sword parts array — ordered from TOP (pommel) to BOTTOM (tip)
+// When sheathed: pommel sits at SCAB_TOP (visible), blade is inside
+// When drawing: entire sword moves UP by swordRise rows
+// swordRise 0 = sheathed (only pommel visible above mouth)
+// swordRise 10 = fully drawn (entire sword above scabbard)
+const SWORD_PARTS = [
+  // These are laid out top-to-bottom as the sword sits in the scabbard
+  { ch: '◊', type: 'pommel' },        // 0: pommel (always visible)
+  { ch: '║', type: 'grip' },           // 1: grip
+  { ch: '║', type: 'grip' },           // 2: grip
+  { ch: '┼', type: 'crossguard_c' },   // 3: crossguard center
+  { ch: '│', type: 'blade' },          // 4: blade
+  { ch: '│', type: 'blade' },          // 5: blade
+  { ch: '│', type: 'blade' },          // 6: blade
+  { ch: '│', type: 'blade' },          // 7: blade
+  { ch: '│', type: 'blade' },          // 8: blade
+  { ch: '│', type: 'blade' },          // 9: blade
+  { ch: '▪', type: 'tip' },            // 10: tip (deepest in scabbard)
+];
+
+const SWORD_LEN = SWORD_PARTS.length; // 11
+
+// Blood splatter characters
+const BLOOD_CH = ['·', '∙', '░', '▒', '▓'];
+
+function buildFrame(cfg) {
+  const { swordRise, mood, bloodLevel, slashFrame, _seed } = cfg;
+
+  const lines = [];
+  const meta = [];
+  for (let r = 0; r < H; r++) {
+    lines.push(new Array(W).fill(' '));
+    meta.push(new Array(W).fill(null).map(() => ({ type: 'empty' })));
+  }
+
+  const cx = Math.floor(W / 2);
+
+  // ── DRAW SCABBARDS ──
+  function drawScabbard(x) {
+    // Scabbard mouth (top) — ornate
+    lines[SCAB_TOP - 1][x - 1] = '╔';
+    lines[SCAB_TOP - 1][x]     = '═';
+    lines[SCAB_TOP - 1][x + 1] = '╗';
+    meta[SCAB_TOP - 1][x - 1] = { type: 'scabbard_mouth' };
+    meta[SCAB_TOP - 1][x]     = { type: 'scabbard_mouth' };
+    meta[SCAB_TOP - 1][x + 1] = { type: 'scabbard_mouth' };
+
+    // Scabbard body
+    for (let r = SCAB_TOP; r <= SCAB_BOT; r++) {
+      lines[r][x - 1] = '│'; meta[r][x - 1] = { type: 'scabbard' };
+      lines[r][x + 1] = '│'; meta[r][x + 1] = { type: 'scabbard' };
+      // Inner (will be overwritten by sword parts if visible)
+      if (meta[r][x].type === 'empty') {
+        lines[r][x] = ' ';
+        meta[r][x] = { type: 'scabbard_inner' };
+      }
+    }
+
+    // Scabbard chape (bottom tip)
+    lines[SCAB_BOT + 1][x] = '▽';
+    meta[SCAB_BOT + 1][x] = { type: 'scabbard_tip' };
+  }
+
+  drawScabbard(LEFT_X);
+  drawScabbard(RIGHT_X);
+
+  // ── DRAW SWORDS ──
+  // When sheathed (rise=0): pommel at row SCAB_TOP-2 (just above mouth),
+  //   parts go downward inside scabbard, tip at SCAB_TOP-2+10
+  // When drawing: the whole sword shifts UP by swordRise rows
+  // Parts below scabbard mouth (SCAB_TOP) are hidden inside the scabbard
+
+  function drawSword(x) {
+    // Pommel position when fully sheathed: just above the scabbard mouth
+    const pommelBaseRow = SCAB_TOP - 2;
+
+    for (let pi = 0; pi < SWORD_LEN; pi++) {
+      const part = SWORD_PARTS[pi];
+      const r = pommelBaseRow + pi - swordRise;
+      // Only show parts that are ABOVE the scabbard mouth (row < SCAB_TOP)
+      // or AT the scabbard mouth level
+      if (r >= SCAB_TOP) continue; // still inside scabbard
+      if (r < 0 || r >= H) continue;
+
+      lines[r][x] = part.ch;
+      meta[r][x] = { type: part.type };
+
+      // Crossguard wings
+      if (part.type === 'crossguard_c') {
+        if (x - 2 >= 0) { lines[r][x - 2] = '◄'; meta[r][x - 2] = { type: 'crossguard' }; }
+        if (x - 1 >= 0) { lines[r][x - 1] = '─'; meta[r][x - 1] = { type: 'crossguard' }; }
+        if (x + 1 < W)  { lines[r][x + 1] = '─'; meta[r][x + 1] = { type: 'crossguard' }; }
+        if (x + 2 < W)  { lines[r][x + 2] = '►'; meta[r][x + 2] = { type: 'crossguard' }; }
+      }
+    }
+  }
+
+  drawSword(LEFT_X);
+  drawSword(RIGHT_X);
+
+  // ── SLASH MARKS (X pattern between swords at peak) ──
+  if (slashFrame) {
+    const slashCy = SCAB_TOP - 2 - Math.floor(SWORD_LEN / 2); // centered with blood
+    for (let i = -3; i <= 3; i++) {
+      const r = slashCy + i;
+      const c1 = cx + i;      // backslash
+      const c2 = cx - i;      // forward slash
+      if (r >= 0 && r < H) {
+        if (c1 >= 0 && c1 < W && meta[r][c1].type === 'empty') {
+          lines[r][c1] = '╲'; meta[r][c1] = { type: 'slash' };
+        }
+        if (c2 >= 0 && c2 < W && meta[r][c2].type === 'empty') {
+          lines[r][c2] = '╱'; meta[r][c2] = { type: 'slash' };
+        }
+      }
+    }
+  }
+
+  // ── BLOOD SPLATTER ──
+  if (bloodLevel > 0) {
+    const seed = _seed || 42;
+    // Center blood between the two swords, vertically around mid-blade height
+    const sprayCenterY = SCAB_TOP - 2 - Math.floor(SWORD_LEN / 2); // ~row 7
+    const numDrops = Math.floor(bloodLevel * 55);
+    for (let d = 0; d < numDrops; d++) {
+      const angle = srand(seed + d * 17) * Math.PI * 2;
+      const dist = srand(seed + d * 31) * (2 + bloodLevel * 9);
+      const r = Math.floor(sprayCenterY + Math.sin(angle) * dist);
+      const c = Math.floor(cx + Math.cos(angle) * dist * 2.0); // wider horizontal spread
+
+      if (r >= 0 && r < H && c >= 0 && c < W && meta[r][c].type === 'empty') {
+        const intensity = Math.max(0, 1 - dist / (2 + bloodLevel * 9));
+        const bi = Math.min(BLOOD_CH.length - 1, Math.floor(intensity * BLOOD_CH.length));
+        lines[r][c] = BLOOD_CH[bi];
+        meta[r][c] = { type: 'blood', intensity };
+      }
+    }
+
+    // Blood drips on blades
+    if (bloodLevel > 0.3) {
+      for (let pi = 4; pi < SWORD_LEN; pi++) { // blade sections only
+        const pommelBase = SCAB_TOP - 2;
+        const r = pommelBase + pi - swordRise;
+        if (r >= SCAB_TOP || r < 0 || r >= H) continue;
+        // Drip beside the blade
+        for (const x of [LEFT_X, RIGHT_X]) {
+          const offset = srand(seed + r * 53 + x) > 0.5 ? 1 : -1;
+          const bc = x + offset;
+          if (bc >= 0 && bc < W && meta[r][bc].type === 'empty' && srand(seed + r * 67 + x) < bloodLevel * 0.5) {
+            lines[r][bc] = '·';
+            meta[r][bc] = { type: 'blood_drip' };
+          }
+        }
+      }
+    }
+  }
+
+  // ── GROUND LINE ──
+  for (let c = 4; c < W - 4; c++) {
+    if (lines[H - 1][c] === ' ') {
+      lines[H - 1][c] = '─';
+      meta[H - 1][c] = { type: 'ground' };
+    }
+  }
+
+  return { lines, meta, mood, swordRise, bloodLevel: bloodLevel || 0 };
+}
+
+// ── COLOR ENGINE ──
+function scabbardColor(mood) {
+  return `hsl(25,${12 + mood * 8}%,${15 + mood * 12}%)`;
+}
+function scabbardMouthColor(mood) {
+  return `hsl(35,${20 + mood * 15}%,${22 + mood * 18}%)`;
+}
+function pommelColor(mood) {
+  const c = `hsl(40,${30 + mood * 30}%,${30 + mood * 35}%)`;
+  return mood > 0.5 ? `${c};text-shadow:0 0 4px ${c}` : c;
+}
+function gripColor(mood) {
+  return `hsl(20,${25 + mood * 15}%,${20 + mood * 20}%)`;
+}
+function crossguardColor(mood) {
+  const c = `hsl(38,${25 + mood * 35}%,${28 + mood * 32}%)`;
+  return mood > 0.6 ? `${c};text-shadow:0 0 3px hsla(38,50%,50%,0.3)` : c;
+}
+function bladeColor(mood) {
+  const h = 210 + mood * 10;
+  const s = 8 + mood * 25;
+  const l = Math.min(85, 35 + mood * 40);
+  const c = `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+  return mood > 0.7 ? `${c};text-shadow:0 0 ${mood * 8}px hsla(210,40%,70%,${(mood*0.3).toFixed(2)})` : c;
+}
+function tipColor(mood) {
+  const c = `hsl(200,${15 + mood * 40}%,${40 + mood * 40}%)`;
+  return `${c};text-shadow:0 0 4px ${c}`;
+}
+function slashColor(mood) {
+  const c = `hsl(0,0%,${60 + mood * 35}%)`;
+  return `${c};text-shadow:0 0 8px hsla(0,0%,90%,${(mood*0.5).toFixed(2)})`;
+}
+function bloodColor(intensity, mood) {
+  const h = intensity * 8;
+  const s = 65 + intensity * 30;
+  const l = Math.min(60, 12 + intensity * 30 + mood * 15);
+  const c = `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+  return intensity > 0.5 ? `${c};text-shadow:0 0 4px hsla(0,80%,40%,${(intensity*0.3).toFixed(2)})` : c;
+}
+function bloodDripColor(mood) {
+  return `hsl(355,70%,${20 + mood * 15}%)`;
+}
+function groundColor(mood) {
+  return `hsl(0,0%,${8 + mood * 6}%)`;
+}
+
+// ── COLORIZE (pass 2) ──
+function colorizeFrame(frame) {
+  const { lines, meta, mood, bloodLevel } = frame;
+  let html = '';
+
+  for (let r = 0; r < lines.length; r++) {
+    let lineHTML = '';
+    let curStyle = '';
+    let spanOpen = false;
+
+    for (let c = 0; c < lines[r].length; c++) {
+      const ch = lines[r][c];
+      const m = meta[r][c];
+      let style = '';
+      let escaped = ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '&' ? '&amp;' : ch;
+
+      if (m.type === 'scabbard' || m.type === 'scabbard_inner' || m.type === 'scabbard_tip') {
+        style = `color:${scabbardColor(mood)}`;
+      } else if (m.type === 'scabbard_mouth') {
+        style = `color:${scabbardMouthColor(mood)}`;
+      } else if (m.type === 'pommel') {
+        style = `color:${pommelColor(mood)}`;
+      } else if (m.type === 'grip') {
+        style = `color:${gripColor(mood)}`;
+      } else if (m.type === 'crossguard_c' || m.type === 'crossguard') {
+        style = `color:${crossguardColor(mood)}`;
+      } else if (m.type === 'blade') {
+        style = `color:${bladeColor(mood)}`;
+      } else if (m.type === 'tip') {
+        style = `color:${tipColor(mood)}`;
+      } else if (m.type === 'slash') {
+        style = `color:${slashColor(mood)}`;
+      } else if (m.type === 'blood') {
+        style = `color:${bloodColor(m.intensity, mood)}`;
+      } else if (m.type === 'blood_drip') {
+        style = `color:${bloodDripColor(mood)}`;
+      } else if (m.type === 'ground') {
+        style = `color:${groundColor(mood)}`;
+      } else {
+        if (spanOpen) { lineHTML += '</span>'; spanOpen = false; curStyle = ''; }
+        lineHTML += escaped;
+        continue;
+      }
+
+      if (style === curStyle && spanOpen) {
+        lineHTML += escaped;
+      } else {
+        if (spanOpen) lineHTML += '</span>';
+        lineHTML += `<span style="${style}">${escaped}`;
+        spanOpen = true;
+        curStyle = style;
+      }
+    }
+    if (spanOpen) { lineHTML += '</span>'; spanOpen = false; }
+    html += lineHTML + '\n';
+  }
+  return html;
+}
+
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  FRAME CONFIGS — 16 frames (BOUNCE doubles to 32)        ║
+// ║  Arc: Tension → Draw → Blades gleam → Strike → Blood     ║
+// ║  Bounce reversal handles the aftermath automatically.     ║
+// ╚═══════════════════════════════════════════════════════════╝
+
+const FC = [
+  // ── Tension (0-2): dark, scabbards visible, pommels barely lit ──
+  { swordRise:0,  mood:0.06, bloodLevel:0, slashFrame:false, _seed:100 },
+  { swordRise:0,  mood:0.10, bloodLevel:0, slashFrame:false, _seed:110 },
+  { swordRise:0,  mood:0.15, bloodLevel:0, slashFrame:false, _seed:120 },
+
+  // ── Draw (3-7): swords sliding upward, blades emerging ──
+  { swordRise:1,  mood:0.22, bloodLevel:0, slashFrame:false, _seed:200 },
+  { swordRise:3,  mood:0.35, bloodLevel:0, slashFrame:false, _seed:210 },
+  { swordRise:5,  mood:0.48, bloodLevel:0, slashFrame:false, _seed:220 },
+  { swordRise:7,  mood:0.60, bloodLevel:0, slashFrame:false, _seed:230 },
+  { swordRise:9,  mood:0.72, bloodLevel:0, slashFrame:false, _seed:240 },
+
+  // ── Fully drawn (8-9): blades gleaming, about to strike ──
+  { swordRise:10, mood:0.82, bloodLevel:0, slashFrame:false, _seed:300 },
+  { swordRise:10, mood:0.92, bloodLevel:0, slashFrame:false, _seed:310 },
+
+  // ── STRIKE (10-11): slash marks, first blood ──
+  { swordRise:10, mood:1.00, bloodLevel:0,    slashFrame:true,  _seed:400 },
+  { swordRise:10, mood:1.00, bloodLevel:0.25, slashFrame:true,  _seed:410 },
+
+  // ── BLOOD SPRAY (12-15): crimson erupts — PEAK ──
+  { swordRise:10, mood:0.95, bloodLevel:0.50, slashFrame:true,  _seed:420 },
+  { swordRise:10, mood:0.90, bloodLevel:0.72, slashFrame:false, _seed:430 },
+  { swordRise:10, mood:0.85, bloodLevel:0.88, slashFrame:false, _seed:440 },
+  { swordRise:10, mood:0.78, bloodLevel:1.00, slashFrame:false, _seed:450 }, // PEAK BLOOD
+];
+
+// Pre-render
+const frameData = FC.map(cfg => {
+  const frame = buildFrame(cfg);
+  const html = colorizeFrame(frame);
+  const blood = cfg.bloodLevel || 0;
+  const glowR = blood > 0.2 ? blood * 50 + cfg.mood * 15 : cfg.mood * 20;
+  const glowO = blood > 0.2 ? blood * 0.15 + cfg.mood * 0.05 : cfg.mood * 0.05;
+  return { html, glowR, glowO, mood: cfg.mood, blood };
+});
+
+// ── PLAYER (BOUNCE default) ──
+let currentFrame = 0, playing = true, looping = false, bouncing = true, direction = 1, interval = null;
+const stage = document.getElementById('stage');
+const scrubber = document.getElementById('scrubber');
+const frameInfo = document.getElementById('frameInfo');
+const playBtn = document.getElementById('playBtn');
+scrubber.max = frameData.length - 1;
+
+function render() {
+  const fd = frameData[currentFrame];
+  stage.innerHTML = '<div style="white-space:pre">' + fd.html + '</div>';
+  scrubber.value = currentFrame;
+  frameInfo.textContent = `${currentFrame + 1} / ${frameData.length}`;
+  const r = fd.glowR, o = fd.glowO, blood = fd.blood, m = fd.mood;
+  const hue = blood > 0.2 ? 0 : 210 + m * 10;
+  const sat = blood > 0.2 ? 70 + blood * 25 : 30 + m * 30;
+  stage.style.boxShadow = r > 2
+    ? `0 0 ${r}px hsla(${hue},${sat}%,45%,${o}), 0 0 ${r*2}px hsla(${hue},${sat*0.8}%,35%,${o*0.4}), inset 0 0 ${r*0.3}px hsla(${hue},${sat*0.6}%,30%,${o*0.3})`
+    : 'none';
+}
+
+function advance() {
+  if (bouncing) {
+    if (currentFrame + direction >= frameData.length || currentFrame + direction < 0) direction *= -1;
+    currentFrame += direction;
+  } else {
+    currentFrame++;
+    if (currentFrame >= frameData.length) {
+      if (looping) currentFrame = 0; else { currentFrame = frameData.length - 1; pause(); return; }
+    }
+  }
+  render();
+}
+function getInterval() { return 1000 / document.getElementById('speed').value; }
+function play() { if (interval) clearInterval(interval); playing = true; playBtn.textContent = '⏸ Pause'; interval = setInterval(advance, getInterval()); }
+function pause() { if (interval) clearInterval(interval); playing = false; playBtn.textContent = '▶ Play'; }
+function togglePlay() { playing ? pause() : play(); }
+function updateSpeed() { if (playing) play(); }
+function scrubTo(val) { currentFrame = parseInt(val); render(); }
+function stepBack() { pause(); currentFrame = Math.max(0, currentFrame - 1); render(); }
+function stepForward() { pause(); currentFrame = Math.min(frameData.length - 1, currentFrame + 1); render(); }
+function toggleLoop() { looping = true; bouncing = false; document.getElementById('loopBtn').classList.add('active'); document.getElementById('bounceBtn').classList.remove('active'); }
+function toggleBounce() { bouncing = true; looping = false; direction = 1; document.getElementById('bounceBtn').classList.add('active'); document.getElementById('loopBtn').classList.remove('active'); }
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowLeft') stepBack();
+  if (e.code === 'ArrowRight') stepForward();
+});
+render(); play();
+</script>
+</body>
+</html>

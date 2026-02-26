@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Ledger</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #050508;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
+                 'SF Mono', 'Consolas', 'Courier New', monospace;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh; padding: 20px;
+    color: #c8b8a8;
+  }
+  h1 { font-size: 1rem; color: #8a3a3a; margin-bottom: 14px; font-weight: 300;
+       letter-spacing: 4px; text-transform: uppercase; opacity: 0.7; }
+  #stage {
+    background: #020204;
+    border: 1px solid #1a1210;
+    border-radius: 12px; padding: 20px 28px;
+    font-size: 14px; line-height: 1.3; white-space: pre;
+    display: flex; align-items: center; justify-content: center;
+    min-width: 560px; min-height: 320px;
+    transition: box-shadow 0.12s ease;
+  }
+  .controls { margin-top: 20px; display: flex; align-items: center; gap: 12px;
+    background: #0a0a08; padding: 10px 20px; border-radius: 8px; border: 1px solid #1a1210; }
+  button { background: none; border: 1px solid #3a2020; color: #b0a090;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 0.85rem; transition: all 0.15s; }
+  button:hover { background: #1a0808; border-color: #c83030; }
+  button.active { background: #6a2020; border-color: #c83030; }
+  .slider-group { display: flex; align-items: center; gap: 6px; }
+  .slider-group label { font-size: 0.75rem; color: #5a3a3a; text-transform: uppercase; letter-spacing: 1px; }
+  input[type="range"] { width: 100px; accent-color: #c83030; }
+  .frame-info { font-size: 0.75rem; color: #5a3a3a; min-width: 70px; text-align: center; }
+  .mode-toggle { margin-top: 10px; display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<h1>The Ledger</h1>
+<div id="stage"></div>
+<div class="controls">
+  <button id="playBtn" onclick="togglePlay()">⏸ Pause</button>
+  <button onclick="stepBack()">◀</button>
+  <button onclick="stepForward()">▶</button>
+  <div class="slider-group"><label>Speed</label>
+    <input type="range" id="speed" min="1" max="20" value="4" oninput="updateSpeed()"></div>
+  <div class="slider-group"><label>Frame</label>
+    <input type="range" id="scrubber" min="0" value="0" oninput="scrubTo(this.value)"></div>
+  <div class="frame-info" id="frameInfo">1 / 1</div>
+</div>
+<div class="mode-toggle">
+  <button id="loopBtn" class="active" onclick="toggleLoop()">🔁 Loop</button>
+  <button id="bounceBtn" onclick="toggleBounce()">🔄 Bounce</button>
+</div>
+
+<script>
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  THE LEDGER — Supply records revealing corruption         ║
+// ║                                                           ║
+// ║  Adapted from book-opening. Military ledger opens to      ║
+// ║  reveal damning evidence of Commander Vexus's betrayal.   ║
+// ║  Color shifts from neutral parchment to blood-red as      ║
+// ║  the corruption becomes clear.                            ║
+// ╚═══════════════════════════════════════════════════════════╝
+
+const W = 58;
+const H = 18;
+
+function srand(seed) { return ((seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; }
+
+// ── LEDGER TEXT: the evidence Bixie finds ──
+// Left page: normal supply entries (innocent)
+const LEFT_PAGE = [
+  ' SUPPLY LEDGER — III ',
+  '─────────────────────',
+  ' 14th Syden  Rations ',
+  '   32 units .. check  ',
+  ' 15th Syden  Arrows  ',
+  '   100 quiv .. check  ',
+  ' 16th Syden  Armor   ',
+  '   18 sets  .. check  ',
+  '',
+  ' Logged: Quartermaster',
+];
+
+// Right page: the damning requisition (the corruption)
+const RIGHT_PAGE = [
+  '  SPECIAL REQUISITION ',
+  '──────────────────────',
+  '  Cmdr. VEXUS — ORDER ',
+  '  "Return all heavy   ',
+  '   armor and magical  ',
+  '   items before next  ',
+  '   deployment."       ',
+  '                      ',
+  '  ◆ ONLY SUCH ORDER ◆',
+  '  IN 6 MONTHS RECORD  ',
+];
+
+// ── BUILD FRAME (pass 1: geometry + metadata) ──
+function buildFrame(cfg) {
+  const { phase, openAmount, mood, revealLevel, _seed } = cfg;
+  // phase: 'closed', 'opening', 'open', 'reveal', 'exposed'
+  // openAmount: 0-1 (how far the ledger is open)
+  // revealLevel: 0-1 (how much of the right page evidence is visible)
+
+  const lines = [];
+  const meta = [];
+  for (let r = 0; r < H; r++) {
+    lines.push(new Array(W).fill(' '));
+    meta.push(new Array(W).fill(null).map(() => ({ type: 'empty' })));
+  }
+
+  const cx = Math.floor(W / 2);
+
+  if (phase === 'closed') {
+    // Single closed ledger — heavier, more official than a book
+    const bw = 24; // ledger width
+    const bh = 12; // ledger height
+    const sx = cx - Math.floor(bw / 2);
+    const sy = 2;
+
+    // Top border with clasps
+    for (let c = sx; c < sx + bw; c++) {
+      if (c === sx) { lines[sy][c] = '┌'; }
+      else if (c === sx + bw - 1) { lines[sy][c] = '┐'; }
+      else if (c === sx + 4 || c === sx + bw - 5) { lines[sy][c] = '◆'; meta[sy][c] = { type: 'clasp' }; continue; }
+      else { lines[sy][c] = '─'; }
+      meta[sy][c] = { type: 'border' };
+    }
+
+    // Body
+    for (let r = sy + 1; r < sy + bh - 1; r++) {
+      lines[r][sx] = '│'; meta[r][sx] = { type: 'border' };
+      lines[r][sx + bw - 1] = '│'; meta[r][sx + bw - 1] = { type: 'border' };
+      for (let c = sx + 1; c < sx + bw - 1; c++) {
+        if (r === sy + Math.floor(bh / 2) - 1) {
+          // Title line
+          const title = 'SUPPLY RECORDS';
+          const ti = c - (sx + 1);
+          const titleStart = Math.floor((bw - 2 - title.length) / 2);
+          if (ti >= titleStart && ti < titleStart + title.length) {
+            lines[r][c] = title[ti - titleStart];
+            meta[r][c] = { type: 'title' };
+          } else {
+            lines[r][c] = '▓';
+            meta[r][c] = { type: 'cover' };
+          }
+        } else if (r === sy + Math.floor(bh / 2)) {
+          const sub = '── III Corps ──';
+          const ti = c - (sx + 1);
+          const subStart = Math.floor((bw - 2 - sub.length) / 2);
+          if (ti >= subStart && ti < subStart + sub.length) {
+            lines[r][c] = sub[ti - subStart];
+            meta[r][c] = { type: 'subtitle' };
+          } else {
+            lines[r][c] = '▓';
+            meta[r][c] = { type: 'cover' };
+          }
+        } else {
+          lines[r][c] = '▓';
+          meta[r][c] = { type: 'cover' };
+        }
+      }
+    }
+
+    // Bottom border
+    for (let c = sx; c < sx + bw; c++) {
+      const r = sy + bh - 1;
+      if (c === sx) { lines[r][c] = '└'; }
+      else if (c === sx + bw - 1) { lines[r][c] = '┘'; }
+      else if (c === sx + 4 || c === sx + bw - 5) { lines[r][c] = '◆'; meta[r][c] = { type: 'clasp' }; continue; }
+      else { lines[r][c] = '─'; }
+      meta[r][c] = { type: 'border' };
+    }
+
+    // Desk
+    const deskY = sy + bh;
+    const dw = 40;
+    const ds = cx - Math.floor(dw / 2);
+    for (let c = ds; c < ds + dw; c++) {
+      lines[deskY][c] = '═';
+      meta[deskY][c] = { type: 'desk' };
+    }
+
+  } else {
+    // ── OPEN LEDGER: two halves ──
+    const halfW = Math.floor(11 + openAmount * 13); // 11 → 24
+    const gap = Math.floor(openAmount * 4);
+    const pageH = 12;
+    const totalW = halfW * 2 + gap;
+    const sx = cx - Math.floor(totalW / 2);
+    const sy = 2;
+
+    // Left half border
+    const lx = sx;
+    lines[sy][lx] = '┌'; meta[sy][lx] = { type: 'border' };
+    lines[sy + pageH - 1][lx] = '└'; meta[sy + pageH - 1][lx] = { type: 'border' };
+    for (let c = lx + 1; c < lx + halfW - 1; c++) {
+      lines[sy][c] = '─'; meta[sy][c] = { type: 'border' };
+      lines[sy + pageH - 1][c] = '─'; meta[sy + pageH - 1][c] = { type: 'border' };
+    }
+    lines[sy][lx + halfW - 1] = '┐'; meta[sy][lx + halfW - 1] = { type: 'border' };
+    lines[sy + pageH - 1][lx + halfW - 1] = '┘'; meta[sy + pageH - 1][lx + halfW - 1] = { type: 'border' };
+    for (let r = sy + 1; r < sy + pageH - 1; r++) {
+      lines[r][lx] = '│'; meta[r][lx] = { type: 'border' };
+      lines[r][lx + halfW - 1] = '│'; meta[r][lx + halfW - 1] = { type: 'border' };
+    }
+
+    // Right half border
+    const rx = lx + halfW + gap;
+    lines[sy][rx] = '┌'; meta[sy][rx] = { type: 'border' };
+    lines[sy + pageH - 1][rx] = '└'; meta[sy + pageH - 1][rx] = { type: 'border' };
+    for (let c = rx + 1; c < rx + halfW - 1; c++) {
+      lines[sy][c] = '─'; meta[sy][c] = { type: 'border' };
+      lines[sy + pageH - 1][c] = '─'; meta[sy + pageH - 1][c] = { type: 'border' };
+    }
+    lines[sy][rx + halfW - 1] = '┐'; meta[sy][rx + halfW - 1] = { type: 'border' };
+    lines[sy + pageH - 1][rx + halfW - 1] = '┘'; meta[sy + pageH - 1][rx + halfW - 1] = { type: 'border' };
+    for (let r = sy + 1; r < sy + pageH - 1; r++) {
+      lines[r][rx] = '│'; meta[r][rx] = { type: 'border' };
+      lines[r][rx + halfW - 1] = '│'; meta[r][rx + halfW - 1] = { type: 'border' };
+    }
+
+    // Gap: spine/binding
+    if (gap > 0) {
+      for (let r = sy; r < sy + pageH; r++) {
+        const gc = lx + halfW + Math.floor(gap / 2);
+        if (gc >= 0 && gc < W) {
+          lines[r][gc] = '┊';
+          meta[r][gc] = { type: 'spine' };
+        }
+      }
+    }
+
+    // Page content
+    const innerW = halfW - 2;
+    const textOpen = openAmount > 0.6;
+
+    if (textOpen) {
+      // LEFT PAGE: normal supply entries
+      for (let li = 0; li < LEFT_PAGE.length && li < pageH - 2; li++) {
+        const row = sy + 1 + li;
+        const text = LEFT_PAGE[li];
+        for (let ci = 0; ci < text.length && ci < innerW; ci++) {
+          const c = lx + 1 + ci;
+          if (c >= 0 && c < W && text[ci] !== ' ') {
+            lines[row][c] = text[ci];
+            meta[row][c] = { type: 'normal_text' };
+          }
+        }
+      }
+
+      // RIGHT PAGE: the damning evidence (revealed progressively)
+      const visibleLines = Math.floor(revealLevel * RIGHT_PAGE.length);
+      for (let li = 0; li < visibleLines && li < pageH - 2; li++) {
+        const row = sy + 1 + li;
+        const text = RIGHT_PAGE[li];
+        const isEvidence = li >= 2; // lines 2+ are the actual orders
+        for (let ci = 0; ci < text.length && ci < innerW; ci++) {
+          const c = rx + 1 + ci;
+          if (c >= 0 && c < W && text[ci] !== ' ') {
+            lines[row][c] = text[ci];
+            if (text[ci] === '◆') {
+              meta[row][c] = { type: 'evidence_mark' };
+            } else if (isEvidence) {
+              meta[row][c] = { type: 'evidence_text' };
+            } else {
+              meta[row][c] = { type: 'header_text' };
+            }
+          }
+        }
+      }
+    } else if (openAmount > 0.2) {
+      // Still opening — show cover fill on both sides
+      for (let r = sy + 1; r < sy + pageH - 1; r++) {
+        for (let c = lx + 1; c < lx + halfW - 1; c++) {
+          if (lines[r][c] === ' ') {
+            lines[r][c] = '░';
+            meta[r][c] = { type: 'page_texture' };
+          }
+        }
+        for (let c = rx + 1; c < rx + halfW - 1; c++) {
+          if (lines[r][c] === ' ') {
+            lines[r][c] = '░';
+            meta[r][c] = { type: 'page_texture' };
+          }
+        }
+      }
+    }
+
+    // Desk
+    const deskY = sy + pageH;
+    const dw = Math.max(totalW + 8, 40);
+    const ds = cx - Math.floor(dw / 2);
+    for (let c = ds; c < ds + dw && c < W; c++) {
+      if (c >= 0) {
+        lines[deskY][c] = '═';
+        meta[deskY][c] = { type: 'desk' };
+      }
+    }
+
+    // Corruption drip marks (when evidence is revealed)
+    if (revealLevel > 0.7) {
+      const dripSeed = _seed || 0;
+      for (let r = sy + pageH + 1; r < H; r++) {
+        for (let c = rx; c < rx + halfW; c++) {
+          if (c >= 0 && c < W && srand(dripSeed + r * 37 + c * 71) < revealLevel * 0.06) {
+            lines[r][c] = '·';
+            meta[r][c] = { type: 'drip' };
+          }
+        }
+      }
+    }
+
+    // Quill pen (resting on desk near right page when fully open)
+    if (openAmount > 0.9) {
+      const qx = rx + halfW + 2;
+      const qy = sy + pageH - 1;
+      if (qx + 3 < W && qy >= 0 && qy < H) {
+        lines[qy - 2][qx] = '/'; meta[qy - 2][qx] = { type: 'quill' };
+        lines[qy - 1][qx + 1] = '/'; meta[qy - 1][qx + 1] = { type: 'quill' };
+        lines[qy][qx + 2] = '•'; meta[qy][qx + 2] = { type: 'quill_tip' };
+      }
+    }
+  }
+
+  return { lines, meta, mood, revealLevel: revealLevel || 0, phase };
+}
+
+// ── COLOR ENGINE ──
+function coverColor(mood) {
+  const h = 25 + mood * 5;
+  const s = 15 + mood * 10;
+  const l = 18 + mood * 8;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+
+function borderColor(mood, reveal) {
+  const h = reveal > 0.5 ? 15 - reveal * 15 : 30;
+  const s = 10 + reveal * 25;
+  const l = 20 + mood * 12;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+
+function titleColor(mood) {
+  const h = 35;
+  const s = 30 + mood * 20;
+  const l = 45 + mood * 25;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+
+function normalTextColor(mood) {
+  const h = 35;
+  const s = 8 + mood * 8;
+  const l = 30 + mood * 25;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+
+function headerTextColor(mood) {
+  const h = 30;
+  const s = 15 + mood * 20;
+  const l = 35 + mood * 30;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+
+function evidenceTextColor(mood, reveal) {
+  // Shifts from neutral to alarming red as reveal increases
+  const h = 30 - reveal * 25; // 30 → 5 (orange → red)
+  const s = 20 + reveal * 65; // 20% → 85%
+  const l = 35 + mood * 25 + reveal * 10;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${Math.min(75, l).toFixed(0)}%)`;
+}
+
+function evidenceMarkColor(mood, reveal) {
+  const h = 5;
+  const s = 75 + reveal * 20;
+  const l = 40 + mood * 30;
+  const c = `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+  const glow = reveal > 0.8 ? `;text-shadow:0 0 8px ${c}` : '';
+  return c + glow;
+}
+
+function pageTextureColor(mood) {
+  return `hsl(35,6%,${12 + mood * 8}%)`;
+}
+
+function spineColor(mood) {
+  return `hsl(25,12%,${14 + mood * 6}%)`;
+}
+
+function deskColor(mood) {
+  return `hsl(25,8%,${10 + mood * 8}%)`;
+}
+
+function claspColor(mood) {
+  const h = 38;
+  const s = 35 + mood * 25;
+  const l = 30 + mood * 30;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+
+function quillColor(mood) {
+  return `hsl(30,15%,${35 + mood * 20}%)`;
+}
+
+function dripColor(mood, reveal) {
+  const h = 0;
+  const s = 60 + reveal * 30;
+  const l = 15 + mood * 10;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+
+// ── COLORIZE (pass 2) ──
+function colorizeFrame(frame) {
+  const { lines, meta, mood, revealLevel } = frame;
+  let html = '';
+
+  for (let r = 0; r < lines.length; r++) {
+    let lineHTML = '';
+    let curStyle = '';
+    let spanOpen = false;
+
+    for (let c = 0; c < lines[r].length; c++) {
+      const ch = lines[r][c];
+      const m = meta[r][c];
+      let style = '';
+      let escaped = ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '&' ? '&amp;' : ch;
+
+      if (m.type === 'cover') {
+        style = `color:${coverColor(mood)}`;
+      } else if (m.type === 'border') {
+        style = `color:${borderColor(mood, revealLevel)}`;
+      } else if (m.type === 'title' || m.type === 'subtitle') {
+        const tc = titleColor(mood);
+        style = mood > 0.3 ? `color:${tc};text-shadow:0 0 4px ${tc}` : `color:${tc}`;
+      } else if (m.type === 'clasp') {
+        const cc = claspColor(mood);
+        style = `color:${cc};text-shadow:0 0 3px ${cc}`;
+      } else if (m.type === 'normal_text') {
+        style = `color:${normalTextColor(mood)}`;
+      } else if (m.type === 'header_text') {
+        style = `color:${headerTextColor(mood)}`;
+      } else if (m.type === 'evidence_text') {
+        const ec = evidenceTextColor(mood, revealLevel);
+        const glow = revealLevel > 0.7 ? `;text-shadow:0 0 ${3 + revealLevel * 6}px hsla(5,80%,50%,${(revealLevel * 0.3).toFixed(2)})` : '';
+        style = `color:${ec}${glow}`;
+      } else if (m.type === 'evidence_mark') {
+        const mc = evidenceMarkColor(mood, revealLevel);
+        style = mc.includes('text-shadow') ? `color:${mc}` : `color:${mc}`;
+      } else if (m.type === 'page_texture') {
+        style = `color:${pageTextureColor(mood)}`;
+      } else if (m.type === 'spine') {
+        style = `color:${spineColor(mood)}`;
+      } else if (m.type === 'desk') {
+        style = `color:${deskColor(mood)}`;
+      } else if (m.type === 'quill') {
+        style = `color:${quillColor(mood)}`;
+      } else if (m.type === 'quill_tip') {
+        const tc = `hsl(25,40%,${20 + mood * 15}%)`;
+        style = `color:${tc}`;
+      } else if (m.type === 'drip') {
+        style = `color:${dripColor(mood, revealLevel)}`;
+      } else {
+        if (spanOpen) { lineHTML += '</span>'; spanOpen = false; curStyle = ''; }
+        lineHTML += escaped;
+        continue;
+      }
+
+      if (style === curStyle && spanOpen) {
+        lineHTML += escaped;
+      } else {
+        if (spanOpen) lineHTML += '</span>';
+        lineHTML += `<span style="${style}">${escaped}`;
+        spanOpen = true;
+        curStyle = style;
+      }
+    }
+    if (spanOpen) { lineHTML += '</span>'; spanOpen = false; }
+    html += lineHTML + '\n';
+  }
+  return html;
+}
+
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  FRAME CONFIGS — 24 frames                                ║
+// ║  Arc: Closed → Opening → Reading → Evidence Revealed      ║
+// ╚═══════════════════════════════════════════════════════════╝
+
+const FC = [
+  // ── Closed ledger, sitting on desk (0-3) ──
+  { phase:'closed', openAmount:0, mood:0.10, revealLevel:0, _seed:100 },
+  { phase:'closed', openAmount:0, mood:0.12, revealLevel:0, _seed:110 },
+  { phase:'closed', openAmount:0, mood:0.15, revealLevel:0, _seed:120 },
+  { phase:'closed', openAmount:0, mood:0.18, revealLevel:0, _seed:130 },
+
+  // ── Opening (4-8): clasps released, cover lifts ──
+  { phase:'opening', openAmount:0.15, mood:0.22, revealLevel:0, _seed:200 },
+  { phase:'opening', openAmount:0.30, mood:0.28, revealLevel:0, _seed:210 },
+  { phase:'opening', openAmount:0.50, mood:0.35, revealLevel:0, _seed:220 },
+  { phase:'opening', openAmount:0.70, mood:0.42, revealLevel:0, _seed:230 },
+  { phase:'opening', openAmount:0.85, mood:0.48, revealLevel:0, _seed:240 },
+
+  // ── Open, text appearing (9-12): normal page visible ──
+  { phase:'open', openAmount:1.0, mood:0.52, revealLevel:0.15, _seed:300 },
+  { phase:'open', openAmount:1.0, mood:0.55, revealLevel:0.25, _seed:310 },
+  { phase:'open', openAmount:1.0, mood:0.58, revealLevel:0.35, _seed:320 },
+  { phase:'open', openAmount:1.0, mood:0.60, revealLevel:0.45, _seed:330 },
+
+  // ── Evidence revealing (13-17): the damning text appears ──
+  { phase:'reveal', openAmount:1.0, mood:0.65, revealLevel:0.55, _seed:400 },
+  { phase:'reveal', openAmount:1.0, mood:0.72, revealLevel:0.65, _seed:410 },
+  { phase:'reveal', openAmount:1.0, mood:0.80, revealLevel:0.75, _seed:420 },
+  { phase:'reveal', openAmount:1.0, mood:0.88, revealLevel:0.85, _seed:430 },
+  { phase:'reveal', openAmount:1.0, mood:0.95, revealLevel:0.95, _seed:440 },
+
+  // ── Fully exposed (18-20): PEAK — the truth burns ──
+  { phase:'exposed', openAmount:1.0, mood:1.00, revealLevel:1.0, _seed:500 },
+  { phase:'exposed', openAmount:1.0, mood:1.00, revealLevel:1.0, _seed:510 },
+  { phase:'exposed', openAmount:1.0, mood:0.95, revealLevel:1.0, _seed:520 },
+
+  // ── Settling (21-23): the weight of truth ──
+  { phase:'exposed', openAmount:1.0, mood:0.82, revealLevel:1.0, _seed:600 },
+  { phase:'exposed', openAmount:1.0, mood:0.70, revealLevel:1.0, _seed:610 },
+  { phase:'exposed', openAmount:1.0, mood:0.60, revealLevel:1.0, _seed:620 },
+];
+
+// Pre-render
+const frameData = FC.map(cfg => {
+  const frame = buildFrame(cfg);
+  const html = colorizeFrame(frame);
+  const reveal = cfg.revealLevel || 0;
+  const glowR = reveal > 0.5 ? reveal * 45 + cfg.mood * 20 : cfg.mood * 12;
+  const glowO = reveal > 0.5 ? reveal * 0.18 + cfg.mood * 0.06 : cfg.mood * 0.04;
+  return { html, glowR, glowO, mood: cfg.mood, reveal };
+});
+
+// ── PLAYER ──
+let currentFrame = 0, playing = true, looping = true, bouncing = false, direction = 1, interval = null;
+const stage = document.getElementById('stage');
+const scrubber = document.getElementById('scrubber');
+const frameInfo = document.getElementById('frameInfo');
+const playBtn = document.getElementById('playBtn');
+scrubber.max = frameData.length - 1;
+
+function render() {
+  const fd = frameData[currentFrame];
+  stage.innerHTML = '<div style="white-space:pre">' + fd.html + '</div>';
+  scrubber.value = currentFrame;
+  frameInfo.textContent = `${currentFrame + 1} / ${frameData.length}`;
+  const r = fd.glowR, o = fd.glowO, reveal = fd.reveal;
+  // Glow shifts from warm amber to blood red as evidence is revealed
+  const hue = reveal > 0.5 ? 15 - reveal * 15 : 30;
+  stage.style.boxShadow = r > 2
+    ? `0 0 ${r}px hsla(${hue},75%,45%,${o}), 0 0 ${r*2}px hsla(${hue},65%,35%,${o*0.4}), inset 0 0 ${r*0.3}px hsla(${hue},60%,30%,${o*0.3})`
+    : 'none';
+}
+
+function advance() {
+  if (bouncing) {
+    if (currentFrame + direction >= frameData.length || currentFrame + direction < 0) direction *= -1;
+    currentFrame += direction;
+  } else {
+    currentFrame++;
+    if (currentFrame >= frameData.length) {
+      if (looping) currentFrame = 0; else { currentFrame = frameData.length - 1; pause(); return; }
+    }
+  }
+  render();
+}
+function getInterval() { return 1000 / document.getElementById('speed').value; }
+function play() { if (interval) clearInterval(interval); playing = true; playBtn.textContent = '⏸ Pause'; interval = setInterval(advance, getInterval()); }
+function pause() { if (interval) clearInterval(interval); playing = false; playBtn.textContent = '▶ Play'; }
+function togglePlay() { playing ? pause() : play(); }
+function updateSpeed() { if (playing) play(); }
+function scrubTo(val) { currentFrame = parseInt(val); render(); }
+function stepBack() { pause(); currentFrame = Math.max(0, currentFrame - 1); render(); }
+function stepForward() { pause(); currentFrame = Math.min(frameData.length - 1, currentFrame + 1); render(); }
+function toggleLoop() { looping = true; bouncing = false; document.getElementById('loopBtn').classList.add('active'); document.getElementById('bounceBtn').classList.remove('active'); }
+function toggleBounce() { bouncing = true; looping = false; direction = 1; document.getElementById('bounceBtn').classList.add('active'); document.getElementById('loopBtn').classList.remove('active'); }
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowLeft') stepBack();
+  if (e.code === 'ArrowRight') stepForward();
+});
+render(); play();
+</script>
+</body>
+</html>

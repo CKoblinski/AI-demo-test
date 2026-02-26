@@ -1,0 +1,15 @@
+{
+  "id": "corruption-ledger",
+  "name": "The Ledger",
+  "description": "Military supply ledger opens to reveal corruption evidence. Pages shift from neutral parchment to blood red as damning entries appear.",
+  "theme": "knowledge/betrayal",
+  "emotion": "curiosity → dread → revelation",
+  "momentTypes": ["dramatic_reveal", "character_moment"],
+  "tags": ["book", "ledger", "corruption", "evidence", "opening", "reveal", "parchment", "blood-red"],
+  "frameCount": 24,
+  "bounceMode": false,
+  "canvasSize": { "W": 58, "H": 18 },
+  "colorPalette": "parchment-to-crimson",
+  "createdAt": "2025-01-01T00:00:00Z",
+  "source": "adapted from book-opening"
+}
