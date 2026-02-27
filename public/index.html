@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>D&D Shorts Factory</h1>
-    <p class="subtitle">Drop a Zoom transcript, get Premiere-ready animations</p>
+    <p class="subtitle">Drop a Zoom transcript, get pixel art dialogue scenes</p>
   </header>
 
   <main id="app">
@@ -49,40 +49,87 @@
       </div>
     </section>
 
-    <!-- Screen 3: Plan Review -->
+    <!-- Screen 3: Moment Selector -->
     <section id="screen-plan" class="screen">
-      <h2>Your Moments</h2>
-      <p class="plan-intro">Review the clips we found. Each clip has 2-3 animation beats that play together. Click a clip to expand and see details.</p>
+      <h2>Pick a Moment</h2>
+      <p class="plan-intro">We found these cinematic moments in your session. Select one, add direction, and we'll generate a pixel art dialogue scene.</p>
 
-      <div id="segments-plan" class="segments-grid"></div>
+      <div id="moments-list" class="moments-list"></div>
+
+      <div class="direction-box">
+        <label for="direction-text">Creative Direction</label>
+        <textarea id="direction-text" rows="4" placeholder="Describe the characters (e.g. 'Bixie is a short blonde wood elf rogue with an Attack on Titan-style military outfit'). Add mood or setting notes. Anything you want the pixel art to capture."></textarea>
+      </div>
 
       <div class="plan-actions">
-        <button id="approve-btn" class="btn-primary">Approve All &amp; Generate</button>
-        <p id="time-estimate" class="estimate"></p>
+        <button id="generate-btn" class="btn-primary" disabled>Generate Pixel Art Scene</button>
+        <p class="estimate">~$0.16 per scene &middot; ~2 min generation time</p>
       </div>
     </section>
 
     <!-- Screen 4: Generating -->
     <section id="screen-generating" class="screen">
-      <h2>Building Animations</h2>
-      <p class="gen-intro">Generating animations sequentially (rate-limited to avoid API errors)...</p>
+      <h2>Building Your Scene</h2>
+      <p class="gen-intro">Generating pixel art assets via Gemini...</p>
 
-      <div id="segments-progress" class="segments-grid"></div>
+      <div id="gen-steps" class="gen-steps">
+        <div class="gen-step" id="step-portrait">
+          <div class="gen-step-icon"></div>
+          <div class="gen-step-info">
+            <div class="gen-step-label">Character Portrait</div>
+            <div class="gen-step-detail" id="step-portrait-detail"></div>
+          </div>
+          <div class="gen-step-thumb" id="step-portrait-thumb"></div>
+        </div>
+        <div class="gen-step" id="step-mouthVariants">
+          <div class="gen-step-icon"></div>
+          <div class="gen-step-info">
+            <div class="gen-step-label">Mouth Variants (x2)</div>
+            <div class="gen-step-detail" id="step-mouthVariants-detail"></div>
+          </div>
+        </div>
+        <div class="gen-step" id="step-background">
+          <div class="gen-step-icon"></div>
+          <div class="gen-step-info">
+            <div class="gen-step-label">Scene Background</div>
+            <div class="gen-step-detail" id="step-background-detail"></div>
+          </div>
+          <div class="gen-step-thumb" id="step-background-thumb"></div>
+        </div>
+        <div class="gen-step" id="step-assembly">
+          <div class="gen-step-icon"></div>
+          <div class="gen-step-info">
+            <div class="gen-step-label">Assemble Scene</div>
+            <div class="gen-step-detail" id="step-assembly-detail"></div>
+          </div>
+        </div>
+        <div class="gen-step" id="step-export">
+          <div class="gen-step-icon"></div>
+          <div class="gen-step-info">
+            <div class="gen-step-label">Export Video</div>
+            <div class="gen-step-detail" id="step-export-detail"></div>
+          </div>
+        </div>
+      </div>
 
       <div class="progress-bar" style="margin-top: 24px">
         <div id="gen-progress" class="progress-fill" style="width: 0%"></div>
       </div>
       <p id="gen-message" class="estimate"></p>
+      <p id="gen-cost" class="estimate"></p>
     </section>
 
     <!-- Screen 5: Results -->
     <section id="screen-results" class="screen">
-      <h2>Your Animations</h2>
+      <h2>Your Scene</h2>
 
-      <div id="segments-results" class="segments-grid"></div>
+      <div id="result-preview" class="result-preview"></div>
+
+      <div id="result-assets" class="result-assets"></div>
 
       <div class="results-actions">
         <button id="download-btn" class="btn-primary">Download All (ZIP)</button>
+        <button id="pick-another-btn" class="btn-secondary">Pick Another Moment</button>
         <button id="new-session-btn" class="btn-secondary">New Session</button>
       </div>
     </section>

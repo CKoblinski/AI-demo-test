@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{SCENE_TITLE}}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: 'Courier New', monospace;
+    overflow: hidden;
+  }
+
+  /* ── 9:16 Vertical Frame ── */
+  #scene {
+    position: relative;
+    width: 1080px;
+    height: 1920px;
+    overflow: hidden;
+    background: #111;
+    image-rendering: pixelated;
+  }
+
+  /* ── Background with retro fire flicker ── */
+  #bg {
+    position: absolute;
+    inset: 0;
+    background-image: url('{{BACKGROUND_SRC}}');
+    background-size: cover;
+    background-position: center;
+    image-rendering: pixelated;
+    animation: torch-flicker 2s steps(4, end) infinite;
+  }
+
+  @keyframes torch-flicker {
+    0%, 100% { filter: brightness(0.48); }
+    25%      { filter: brightness(0.53); }
+    50%      { filter: brightness(0.44); }
+    75%      { filter: brightness(0.56); }
+  }
+
+  /* ── Vignette overlay ── */
+  #bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%);
+  }
+
+  /* ── Torch glow overlays ── */
+  .torch-glow {
+    position: absolute;
+    width: 240px;
+    height: 240px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,160,50,0.18) 0%, transparent 70%);
+    mix-blend-mode: screen;
+    pointer-events: none;
+    animation: glow-pulse 3s steps(6, end) infinite;
+    z-index: 1;
+  }
+
+  .torch-glow:nth-child(2) {
+    animation-delay: -1.2s;
+    width: 200px;
+    height: 200px;
+  }
+
+  @keyframes glow-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(1); }
+    16%      { opacity: 0.65; transform: scale(1.04); }
+    33%      { opacity: 0.45; transform: scale(0.97); }
+    50%      { opacity: 0.7;  transform: scale(1.06); }
+    66%      { opacity: 0.4;  transform: scale(1.01); }
+    83%      { opacity: 0.6;  transform: scale(0.99); }
+  }
+
+  /* ── Dialogue Box Area ── */
+  #dialogue-box {
+    position: absolute;
+    bottom: 80px;
+    left: 40px;
+    right: 40px;
+    display: flex;
+    gap: 24px;
+    align-items: flex-end;
+    z-index: 10;
+  }
+
+  /* ── Character Portrait — Multi-Frame ── */
+  #portrait-frame {
+    flex-shrink: 0;
+    width: 280px;
+    height: 280px;
+    border: 6px solid {{CHAR_COLOR}};
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    box-shadow:
+      0 0 20px {{CHAR_COLOR}}44,
+      inset 0 0 20px rgba(0,0,0,0.5);
+    animation: portrait-bob 3s ease-in-out infinite, portrait-glow 4s ease-in-out infinite;
+    image-rendering: pixelated;
+  }
+
+  .portrait-variant {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    image-rendering: pixelated;
+    opacity: 0;
+    /* No transition — instant swap for retro frame-by-frame feel */
+  }
+
+  .portrait-variant.active {
+    opacity: 1;
+  }
+
+  /* ── Text Box ── */
+  #text-frame {
+    flex: 1;
+    background: rgba(10, 8, 20, 0.92);
+    border: 4px solid {{CHAR_COLOR}}88;
+    border-radius: 12px;
+    padding: 28px 32px;
+    min-height: 240px;
+    position: relative;
+    box-shadow:
+      0 0 30px rgba(0,0,0,0.8),
+      inset 0 0 60px rgba(0,0,0,0.3);
+  }
+
+  /* ── Decorative corners ── */
+  #text-frame::before,
+  #text-frame::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-color: {{CHAR_COLOR}};
+    border-style: solid;
+  }
+  #text-frame::before {
+    top: 8px; left: 8px;
+    border-width: 3px 0 0 3px;
+  }
+  #text-frame::after {
+    bottom: 8px; right: 8px;
+    border-width: 0 3px 3px 0;
+  }
+
+  /* ── Character Name ── */
+  #char-name {
+    font-size: 36px;
+    font-weight: bold;
+    color: {{CHAR_COLOR}};
+    text-shadow: 0 0 12px {{CHAR_COLOR}}66;
+    margin-bottom: 16px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  /* ── Dialogue Text ── */
+  #dialogue-text {
+    font-size: 32px;
+    line-height: 1.5;
+    color: #e8e4d8;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    min-height: 100px;
+    transition: opacity 0.3s;
+  }
+
+  /* Characters revealed by JS typewriter */
+  .char {
+    opacity: 0;
+    display: inline;
+  }
+  .char.visible {
+    opacity: 1;
+  }
+
+  /* ── Cursor ── */
+  #cursor {
+    display: inline-block;
+    width: 3px;
+    height: 32px;
+    background: {{CHAR_COLOR}};
+    vertical-align: text-bottom;
+    animation: cursor-blink 0.8s step-end infinite;
+    margin-left: 2px;
+  }
+
+  /* ── Animations ── */
+  @keyframes portrait-bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+
+  @keyframes portrait-glow {
+    0%, 100% { box-shadow: 0 0 20px {{CHAR_COLOR}}44, inset 0 0 20px rgba(0,0,0,0.5); }
+    50% { box-shadow: 0 0 35px {{CHAR_COLOR}}66, inset 0 0 20px rgba(0,0,0,0.5); }
+  }
+
+  @keyframes cursor-blink {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+  }
+
+  /* ── Ambient particles ── */
+  .particle {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: {{CHAR_COLOR}}33;
+    pointer-events: none;
+  }
+
+  /* ── Responsive scaling ── */
+  @media (max-height: 1920px) {
+    #scene {
+      transform-origin: top center;
+      transform: scale(calc(100vh / 1920));
+    }
+  }
+</style>
+</head>
+<body>
+
+<div id="scene">
+  <div id="bg"></div>
+
+  <!-- Torch glow overlays -->
+  <div class="torch-glow" style="top: 25%; left: 25%"></div>
+  <div class="torch-glow" style="top: 35%; left: 70%"></div>
+
+  <!-- Ambient particles -->
+  <div id="particles"></div>
+
+  <!-- Dialogue UI -->
+  <div id="dialogue-box">
+    <div id="portrait-frame">
+      {{PORTRAIT_IMGS}}
+    </div>
+    <div id="text-frame">
+      <div id="char-name">{{CHAR_NAME}}</div>
+      <div id="dialogue-text"></div>
+      <span id="cursor"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ══════════════════════════════════════════
+  // Configuration (injected by assembler)
+  // ══════════════════════════════════════════
+  const DIALOGUE_LINES = {{DIALOGUE_LINES_JSON}};
+  const MOUTH_CYCLE_MS = {{MOUTH_CYCLE_MS}};
+  const LINE_PAUSE_MS = {{LINE_PAUSE_MS}};
+  const PORTRAIT_COUNT = {{PORTRAIT_COUNT}};
+
+  // ══════════════════════════════════════════
+  // Mouth Animation — Frame Cycling
+  // ══════════════════════════════════════════
+  const portraits = document.querySelectorAll('.portrait-variant');
+  let mouthFrame = 0;
+  let mouthDirection = 1;
+  let mouthTimer = null;
+  let isTalking = false;
+
+  // Cycle pattern: 0 → 1 → 2 → 1 → 0 → 1 → 2 → ...
+  function cycleMouth() {
+    if (!isTalking || PORTRAIT_COUNT <= 1) return;
+
+    mouthFrame += mouthDirection;
+    if (mouthFrame >= PORTRAIT_COUNT - 1) mouthDirection = -1;
+    if (mouthFrame <= 0) mouthDirection = 1;
+
+    portraits.forEach((p, i) => {
+      p.classList.toggle('active', i === mouthFrame);
+    });
+  }
+
+  function startTalking() {
+    if (PORTRAIT_COUNT <= 1) return;
+    isTalking = true;
+    mouthFrame = 0;
+    mouthDirection = 1;
+    mouthTimer = setInterval(cycleMouth, MOUTH_CYCLE_MS);
+  }
+
+  function stopTalking() {
+    isTalking = false;
+    if (mouthTimer) { clearInterval(mouthTimer); mouthTimer = null; }
+    // Return to closed mouth (frame 0)
+    portraits.forEach((p, i) => {
+      p.classList.toggle('active', i === 0);
+    });
+  }
+
+  // ══════════════════════════════════════════
+  // Dialogue State Machine
+  // ══════════════════════════════════════════
+  const textEl = document.getElementById('dialogue-text');
+  const cursorEl = document.getElementById('cursor');
+
+  let currentLine = 0;
+  let charIndex = 0;
+  let charSpans = [];
+  let typeTimer = null;
+
+  // States: IDLE → TYPING → PAUSE → CLEARING → (next line or DONE)
+
+  function setupLine(lineIndex) {
+    const line = DIALOGUE_LINES[lineIndex];
+    if (!line) return;
+
+    textEl.innerHTML = '';
+    textEl.style.opacity = '1';
+    charSpans = [];
+    charIndex = 0;
+
+    for (let i = 0; i < line.text.length; i++) {
+      const span = document.createElement('span');
+      span.className = 'char';
+      if (line.text[i] === '\n') {
+        textEl.appendChild(document.createElement('br'));
+      } else {
+        span.textContent = line.text[i];
+        textEl.appendChild(span);
+        charSpans.push(span);
+      }
+    }
+  }
+
+  function typeNextChar() {
+    if (charIndex >= charSpans.length) {
+      // Line finished typing
+      clearInterval(typeTimer);
+      typeTimer = null;
+      stopTalking();
+
+      // Check if there are more lines
+      if (currentLine < DIALOGUE_LINES.length - 1) {
+        setTimeout(clearAndNextLine, LINE_PAUSE_MS);
+      }
+      // else: stay on last line (DONE state)
+      return;
+    }
+    charSpans[charIndex].classList.add('visible');
+    charIndex++;
+  }
+
+  function clearAndNextLine() {
+    // Fade out current text
+    textEl.style.opacity = '0';
+
+    setTimeout(() => {
+      currentLine++;
+      setupLine(currentLine);
+      startTyping();
+    }, 400); // wait for fade
+  }
+
+  function startTyping() {
+    const line = DIALOGUE_LINES[currentLine];
+    if (!line) return;
+
+    startTalking();
+    typeTimer = setInterval(typeNextChar, line.speed || 55);
+  }
+
+  // ══════════════════════════════════════════
+  // Ambient Particles
+  // ══════════════════════════════════════════
+  const particlesEl = document.getElementById('particles');
+
+  function createParticle() {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const x = Math.random() * 1080;
+    const duration = 8 + Math.random() * 12;
+    const delay = Math.random() * 10;
+    const size = 2 + Math.random() * 4;
+    const drift = ((Math.random() - 0.5) * 200).toFixed(0);
+
+    p.style.cssText = `
+      left: ${x}px;
+      bottom: -20px;
+      width: ${size}px;
+      height: ${size}px;
+      opacity: ${(0.1 + Math.random() * 0.3).toFixed(2)};
+      animation: float-up-${drift} ${duration}s ${delay}s linear infinite;
+    `;
+
+    // Create unique keyframe for this drift amount
+    if (!document.querySelector(`style[data-drift="${drift}"]`)) {
+      const style = document.createElement('style');
+      style.dataset.drift = drift;
+      style.textContent = `
+        @keyframes float-up-${drift} {
+          0%   { transform: translateY(0) translateX(0); opacity: 0; }
+          10%  { opacity: 0.3; }
+          90%  { opacity: 0.1; }
+          100% { transform: translateY(-2100px) translateX(${drift}px); opacity: 0; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    particlesEl.appendChild(p);
+  }
+
+  for (let i = 0; i < 15; i++) createParticle();
+
+  // ══════════════════════════════════════════
+  // Start!
+  // ══════════════════════════════════════════
+  // Set initial portrait frame
+  if (portraits.length > 0) {
+    portraits[0].classList.add('active');
+  }
+
+  // Begin first line after brief pause
+  setupLine(0);
+  setTimeout(startTyping, 800);
+</script>
+
+</body>
+</html>

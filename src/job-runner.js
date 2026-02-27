@@ -3,6 +3,7 @@ import { findHighlights } from './find-highlights.js';
 import { generateWithRetry } from './generate-animation.js';
 import { exportAnimation } from './export-animation.js';
 import { findMatch, getAnimationHtml, listAnimations } from './library.js';
+import { buildPixelScene } from './pixel-art-scene-builder.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, cpSync } from 'fs';
 import { join, resolve } from 'path';
 import archiver from 'archiver';
@@ -359,6 +360,100 @@ export async function runGeneration(sessionId) {
     saveState(session);
 
   } catch (err) {
+    session.stage = 'failed';
+    session.error = err.message;
+    session.progress = { message: `Generation failed: ${err.message}`, percent: 0 };
+    saveState(session);
+    throw err;
+  }
+}
+
+/**
+ * Run pixel art generation for a selected moment.
+ * Generates portrait, mouth variants, background, assembles scene, exports video.
+ */
+export async function runPixelGeneration(sessionId, momentIndex, direction = '') {
+  const session = sessions.get(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  if (!session.highlights) throw new Error('No highlights available');
+
+  const moment = session.highlights[momentIndex];
+  if (!moment) throw new Error(`Invalid moment index: ${momentIndex}`);
+
+  session.selectedMoment = momentIndex;
+  session.direction = direction;
+  session.stage = 'generating';
+  session.generation = {
+    status: 'generating',
+    portrait: { status: 'pending' },
+    mouthVariants: { status: 'pending' },
+    background: { status: 'pending' },
+    assembly: { status: 'pending' },
+    export: { status: 'pending' },
+    totalCost: 0,
+  };
+  session.progress = { message: 'Generating pixel art scene...', percent: 55 };
+  saveState(session);
+
+  const sceneDir = join(session.outDir, `moment_${String(momentIndex + 1).padStart(2, '0')}_${slugify(moment.title)}`);
+
+  try {
+    const result = await buildPixelScene({
+      moment,
+      direction,
+      cues: session.parsedSession?.cues || [],
+      outDir: sceneDir,
+      onProgress: (step, data) => {
+        // Update session.generation with per-asset progress
+        if (step === 'parsed') {
+          session.progress = { message: `Generating portrait for ${data.characterName}...`, percent: 58 };
+        } else if (step === 'portrait') {
+          session.generation.portrait = { ...session.generation.portrait, ...data };
+          if (data.status === 'complete') {
+            session.generation.totalCost += 0.04;
+            session.progress = { message: 'Generating mouth variants...', percent: 65 };
+          }
+        } else if (step === 'mouthVariants') {
+          session.generation.mouthVariants = { ...session.generation.mouthVariants, ...data };
+          if (data.status === 'complete') {
+            session.generation.totalCost += data.count * 0.04;
+            session.progress = { message: 'Generating background...', percent: 75 };
+          }
+        } else if (step === 'background') {
+          session.generation.background = { ...session.generation.background, ...data };
+          if (data.status === 'complete') {
+            session.generation.totalCost += 0.04;
+            session.progress = { message: 'Assembling scene...', percent: 85 };
+          }
+        } else if (step === 'assembly') {
+          session.generation.assembly = { ...session.generation.assembly, ...data };
+          if (data.status === 'complete') {
+            session.progress = { message: 'Exporting video...', percent: 90 };
+          }
+        } else if (step === 'export') {
+          session.generation.export = { ...session.generation.export, ...data };
+        }
+        saveState(session);
+      },
+    });
+
+    // Final state
+    session.generation.status = 'complete';
+    session.generation.totalCost = result.totalCost;
+    session.generation.export.files = {
+      html: result.html,
+      mp4: result.mp4,
+      gif: result.gif,
+      portraitPng: result.portrait?.path,
+      backgroundPng: result.background?.path,
+      mouthVariantPngs: result.mouthVariants.map(v => v.path),
+    };
+    session.stage = 'complete';
+    session.progress = { message: 'Scene complete!', percent: 100 };
+    saveState(session);
+
+  } catch (err) {
+    session.generation.status = 'failed';
     session.stage = 'failed';
     session.error = err.message;
     session.progress = { message: `Generation failed: ${err.message}`, percent: 0 };

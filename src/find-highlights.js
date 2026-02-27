@@ -108,12 +108,12 @@ export async function findHighlights(session, options = {}) {
     throw new Error('No highlights found in any chunk. The transcript may not contain recognizable D&D moments.');
   }
 
-  // Deduplicate and pick top 3
+  // Deduplicate and pick top 7
   const deduped = deduplicateHighlights(allHighlights);
-  const top3 = deduped.slice(0, 3).map((h, i) => ({ ...h, rank: i + 1 }));
+  const topN = deduped.slice(0, 7).map((h, i) => ({ ...h, rank: i + 1 }));
 
-  console.log(`\nFinal: ${top3.length} highlights selected from ${allHighlights.length} candidates.`);
-  return top3;
+  console.log(`\nFinal: ${topN.length} highlights selected from ${allHighlights.length} candidates.`);
+  return topN;
 }
 
 /**

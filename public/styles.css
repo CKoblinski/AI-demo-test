@@ -439,7 +439,7 @@ textarea:focus { outline: none; border-color: var(--accent); }
 
 .plan-actions {
   text-align: center;
-  margin-top: 8px;
+  margin-top: 16px;
 }
 
 .plan-actions .btn-primary {
@@ -447,183 +447,366 @@ textarea:focus { outline: none; border-color: var(--accent); }
   margin: 0 auto;
 }
 
-/* ── Clip Accordion (Plan Review) ── */
-.clip-card {
+/* ── Direction Box ── */
+.direction-box {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
-  transition: border-color 0.2s;
+  padding: 20px;
+  margin-top: 20px;
 }
 
-.clip-card:hover { border-color: rgba(200, 160, 48, 0.3); }
-
-.clip-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 20px;
-  cursor: pointer;
-  user-select: none;
+.direction-box label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--accent);
 }
 
-.clip-header:hover { background: var(--surface-hover); }
-
-.clip-expand-icon {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  transition: transform 0.2s;
-  flex-shrink: 0;
-}
-
-.clip-card.expanded .clip-expand-icon {
-  transform: rotate(90deg);
-}
-
-.clip-summary {
-  padding: 0 20px 12px;
-  font-size: 0.85rem;
-  color: var(--text-dim);
-  line-height: 1.5;
-}
-
-.clip-body {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.3s ease-out;
-}
-
-.clip-card.expanded .clip-body {
-  max-height: 3000px;
-  transition: max-height 0.5s ease-in;
-}
-
-.clip-animations {
-  padding: 0 20px 20px;
+/* ── Moment Cards (Screen 3) ── */
+.moments-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  margin: 16px 0;
 }
 
-.clip-why {
-  padding: 0 20px 16px;
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  line-height: 1.5;
+.moment-card {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
-/* ── Animation Concept Cards ── */
-.anim-concept {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
+.moment-card:hover {
+  border-color: rgba(200, 160, 48, 0.4);
 }
 
-.anim-concept-header {
+.moment-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(200, 160, 48, 0.1);
+}
+
+.moment-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 8px;
 }
 
-.anim-order {
-  width: 22px;
-  height: 22px;
+.moment-radio {
+  font-size: 1.1rem;
+  color: var(--accent);
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+
+.moment-rank {
+  width: 24px;
+  height: 24px;
+  background: var(--accent);
+  color: #000;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 700;
-  background: var(--border);
-  color: var(--text);
   flex-shrink: 0;
 }
 
-.anim-concept-title {
-  font-size: 0.85rem;
-  font-weight: 500;
+.moment-title {
+  font-size: 1rem;
+  font-weight: 600;
   flex: 1;
 }
 
-.anim-description {
+.moment-meta {
+  display: flex;
+  gap: 16px;
   font-size: 0.8rem;
   color: var(--text-dim);
-  line-height: 1.4;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  padding-left: 54px;
 }
 
-/* ── Decision Badges (prominent) ── */
-.decision-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.decision-badge-REUSE {
-  background: rgba(61, 220, 132, 0.15);
-  color: var(--success);
-  border: 1px solid rgba(61, 220, 132, 0.3);
-}
-
-.decision-badge-ADAPT {
-  background: rgba(255, 170, 0, 0.15);
-  color: var(--warning);
-  border: 1px solid rgba(255, 170, 0, 0.3);
-}
-
-.decision-badge-CREATE {
-  background: rgba(150, 100, 255, 0.15);
-  color: #a080ff;
-  border: 1px solid rgba(150, 100, 255, 0.3);
-}
-
-/* ── Library Preview Iframe ── */
-.library-preview {
-  width: 100%;
-  height: 200px;
+.moment-transcript {
+  background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  margin-top: 8px;
-  background: #020204;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 10px 0;
 }
 
-.library-preview-label {
-  font-size: 0.75rem;
+.transcript-line {
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.transcript-line:last-child { margin-bottom: 0; }
+
+.transcript-speaker {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.transcript-text {
+  color: var(--text);
+}
+
+.visual-concept {
+  font-size: 0.85rem;
   color: var(--text-dim);
-  margin-top: 6px;
+  line-height: 1.5;
+  padding: 8px 14px;
+  border-left: 3px solid rgba(150, 100, 255, 0.4);
+  margin: 8px 0;
   font-style: italic;
 }
 
-/* ── Directors Notes ── */
-.directors-notes {
-  margin-top: 12px;
+.speakers-needed {
+  font-size: 0.8rem;
+  color: var(--warning);
+  margin: 8px 0;
 }
 
-.directors-notes summary {
+.speaker-tag {
+  display: inline-block;
+  background: rgba(255, 170, 0, 0.15);
+  border: 1px solid rgba(255, 170, 0, 0.3);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+  margin: 0 4px;
+}
+
+.moment-why {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+/* Transcript context (expandable) */
+.moment-context-details {
+  margin-top: 8px;
+}
+
+.moment-context-details summary {
   cursor: pointer;
   font-size: 0.8rem;
   color: var(--text-dim);
   padding: 4px 0;
 }
 
-.directors-notes pre {
+.moment-context-details summary:hover {
+  color: var(--accent);
+}
+
+.moment-context-cues {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 12px;
-  font-size: 0.75rem;
+  padding: 10px 12px;
+  margin-top: 6px;
+  max-height: 300px;
+  overflow-y: auto;
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  color: var(--text-dim);
-  overflow-x: auto;
-  margin-top: 8px;
-  white-space: pre-wrap;
+  font-size: 0.75rem;
+  line-height: 1.6;
 }
+
+.context-cue { margin-bottom: 2px; }
+
+.cue-time {
+  color: var(--text-dim);
+  margin-right: 8px;
+  opacity: 0.6;
+}
+
+/* ── Generation Steps (Screen 4) ── */
+.gen-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 20px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.gen-step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.gen-step:last-child { border-bottom: none; }
+
+.gen-step-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.gen-step-pending .gen-step-icon { border-color: var(--text-dim); }
+
+.gen-step-generating .gen-step-icon,
+.gen-step-assembling .gen-step-icon,
+.gen-step-exporting .gen-step-icon {
+  border-color: var(--accent);
+  animation: pulse 1s infinite;
+}
+
+.gen-step-generating .gen-step-icon::after,
+.gen-step-assembling .gen-step-icon::after,
+.gen-step-exporting .gen-step-icon::after {
+  content: '';
+  position: absolute;
+  top: 4px; left: 4px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1s infinite;
+}
+
+.gen-step-complete .gen-step-icon {
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.gen-step-complete .gen-step-icon::after {
+  content: '\2713';
+  position: absolute;
+  top: -1px; left: 3px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #000;
+}
+
+.gen-step-failed .gen-step-icon {
+  border-color: var(--error);
+  background: var(--error);
+}
+
+.gen-step-info { flex: 1; }
+
+.gen-step-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.gen-step-detail {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.gen-step-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.gen-step-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+/* ── Results (Screen 5) ── */
+.result-preview {
+  margin: 20px 0;
+}
+
+.preview-container {
+  text-align: center;
+}
+
+.scene-preview-frame {
+  width: 100%;
+  max-width: 400px;
+  height: 700px;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: #020204;
+}
+
+.result-assets {
+  margin: 20px 0;
+}
+
+.result-assets h3 {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
+}
+
+.asset-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 10px;
+  text-align: center;
+  text-decoration: none;
+  color: var(--text);
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.asset-card:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.asset-icon {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(200, 160, 48, 0.15);
+  padding: 6px 10px;
+  border-radius: 4px;
+  display: inline-block;
+  margin-bottom: 8px;
+}
+
+.asset-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.result-cost {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-top: 12px;
+  text-align: right;
+}
+
+.results-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.results-actions .btn-primary { flex: 1; }
+.results-actions .btn-secondary { flex: 0; white-space: nowrap; }
