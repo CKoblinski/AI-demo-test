@@ -1,0 +1,15 @@
+{
+  "id": "swords-drawn",
+  "name": "The Confrontation",
+  "description": "Two swords drawn from scabbards with blood spray at peak violence. Tone poem for violent confrontation — doesn't animate the fight, animates the feeling.",
+  "theme": "combat/violence",
+  "emotion": "tension → violence → dread",
+  "momentTypes": ["combat_climax", "dramatic_reveal"],
+  "tags": ["swords", "combat", "blood", "violence", "confrontation", "weapons", "steel", "draw"],
+  "frameCount": 16,
+  "bounceMode": true,
+  "canvasSize": { "W": 48, "H": 22 },
+  "colorPalette": "steel-blue-to-crimson",
+  "createdAt": "2025-01-01T00:00:00Z",
+  "source": "hand-crafted"
+}

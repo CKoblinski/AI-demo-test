@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Natural 20</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #050508;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code',
+                 'SF Mono', 'Consolas', 'Courier New', monospace;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh; padding: 20px;
+    color: #c8c0b0;
+  }
+  h1 { font-size: 1rem; color: #8a7a3a; margin-bottom: 14px; font-weight: 300;
+       letter-spacing: 4px; text-transform: uppercase; opacity: 0.7; }
+  #stage {
+    background: #020204;
+    border: 1px solid #1a1510;
+    border-radius: 12px; padding: 20px 28px;
+    font-size: 14px; line-height: 1.3; white-space: pre;
+    display: flex; align-items: center; justify-content: center;
+    min-width: 520px; min-height: 380px;
+    transition: box-shadow 0.12s ease;
+  }
+  .controls { margin-top: 20px; display: flex; align-items: center; gap: 12px;
+    background: #0a0a08; padding: 10px 20px; border-radius: 8px; border: 1px solid #1a1510; }
+  button { background: none; border: 1px solid #3a3020; color: #b0a890;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 0.85rem; transition: all 0.15s; }
+  button:hover { background: #1a1508; border-color: #c8a030; }
+  button.active { background: #8a7020; border-color: #c8a030; }
+  .slider-group { display: flex; align-items: center; gap: 6px; }
+  .slider-group label { font-size: 0.75rem; color: #5a5030; text-transform: uppercase; letter-spacing: 1px; }
+  input[type="range"] { width: 100px; accent-color: #c8a030; }
+  .frame-info { font-size: 0.75rem; color: #5a5030; min-width: 70px; text-align: center; }
+  .mode-toggle { margin-top: 10px; display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<h1>Natural Twenty</h1>
+<div id="stage"></div>
+<div class="controls">
+  <button id="playBtn" onclick="togglePlay()">⏸ Pause</button>
+  <button onclick="stepBack()">◀</button>
+  <button onclick="stepForward()">▶</button>
+  <div class="slider-group"><label>Speed</label>
+    <input type="range" id="speed" min="1" max="20" value="5" oninput="updateSpeed()"></div>
+  <div class="slider-group"><label>Frame</label>
+    <input type="range" id="scrubber" min="0" value="0" oninput="scrubTo(this.value)"></div>
+  <div class="frame-info" id="frameInfo">1 / 1</div>
+</div>
+<div class="mode-toggle">
+  <button id="loopBtn" class="active" onclick="toggleLoop()">🔁 Loop</button>
+  <button id="bounceBtn" onclick="toggleBounce()">🔄 Bounce</button>
+</div>
+
+<script>
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  NATURAL 20 — Slot Machine Style                          ║
+// ║                                                           ║
+// ║  Numbers spin like a slot reel: fast blur of digits,      ║
+// ║  slowing down, clicking into place... 2... 0...           ║
+// ║  TWENTY. Golden explosion.                                ║
+// ╚═══════════════════════════════════════════════════════════╝
+
+const W = 48;
+const H = 20;
+
+function srand(seed) { return ((seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; }
+
+// ── BLOCK NUMBER FONT: each digit is 7 rows × 8 cols ──
+const DIGITS = {
+  '0': [
+    ' ██████ ',
+    '██    ██',
+    '██    ██',
+    '██    ██',
+    '██    ██',
+    '██    ██',
+    ' ██████ ',
+  ],
+  '1': [
+    '   ██   ',
+    ' ████   ',
+    '   ██   ',
+    '   ██   ',
+    '   ██   ',
+    '   ██   ',
+    ' ██████ ',
+  ],
+  '2': [
+    ' ██████ ',
+    '██    ██',
+    '      ██',
+    '    ██  ',
+    '  ██    ',
+    '██      ',
+    '████████',
+  ],
+  '3': [
+    ' ██████ ',
+    '██    ██',
+    '      ██',
+    '   ████ ',
+    '      ██',
+    '██    ██',
+    ' ██████ ',
+  ],
+  '4': [
+    '██    ██',
+    '██    ██',
+    '██    ██',
+    '████████',
+    '      ██',
+    '      ██',
+    '      ██',
+  ],
+  '5': [
+    '████████',
+    '██      ',
+    '██████  ',
+    '      ██',
+    '      ██',
+    '██    ██',
+    ' ██████ ',
+  ],
+  '6': [
+    ' ██████ ',
+    '██      ',
+    '██      ',
+    '███████ ',
+    '██    ██',
+    '██    ██',
+    ' ██████ ',
+  ],
+  '7': [
+    '████████',
+    '      ██',
+    '     ██ ',
+    '    ██  ',
+    '   ██   ',
+    '   ██   ',
+    '   ██   ',
+  ],
+  '8': [
+    ' ██████ ',
+    '██    ██',
+    '██    ██',
+    ' ██████ ',
+    '██    ██',
+    '██    ██',
+    ' ██████ ',
+  ],
+  '9': [
+    ' ██████ ',
+    '██    ██',
+    '██    ██',
+    ' ███████',
+    '      ██',
+    '      ██',
+    ' ██████ ',
+  ],
+};
+
+// ── DISPLAY FRAME for the number slot (border around the number) ──
+const SLOT_W = 22; // internal width for 2 digits + gap
+const SLOT_H = 11; // 7 digit rows + 2 border + 2 padding
+const SLOT_TOP = 4;
+
+function padC(s, w) { const p = Math.floor((w - s.length) / 2); return ' '.repeat(Math.max(0,p)) + s + ' '.repeat(Math.max(0, w - s.length - p)); }
+
+// Build the slot machine frame (border)
+function buildSlotBorder() {
+  const lines = [];
+  const topBot = '╔' + '═'.repeat(SLOT_W) + '╗';
+  const divider = '╠' + '═'.repeat(SLOT_W) + '╣';
+  lines.push(topBot);
+  lines.push('║' + ' '.repeat(SLOT_W) + '║');
+  for (let i = 0; i < 7; i++) {
+    lines.push('║' + ' '.repeat(SLOT_W) + '║');
+  }
+  lines.push('║' + ' '.repeat(SLOT_W) + '║');
+  lines.push('╚' + '═'.repeat(SLOT_W) + '╝');
+  return lines;
+}
+
+// ── BURST CHARS ──
+const BURST_CH = ['▓', '▒', '░', '·'];
+
+// ── COLOR FUNCTIONS ──
+function numColor(mood, isBlock) {
+  if (!isBlock) return 'transparent';
+  const h = 45 + (1 - mood) * 160;
+  const s = 15 + mood * 75;
+  const l = 35 + mood * 55;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${Math.min(97, l).toFixed(0)}%)`;
+}
+function slotBorderColor(mood) {
+  const h = 38 + mood * 10;
+  const s = 10 + mood * 40;
+  const l = 18 + mood * 22;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+function blurColor() {
+  return `hsl(0,0%,${12 + Math.random() * 8}%)`;
+}
+function burstFillColor(t, mood) {
+  const h = 40 + t * 20;
+  const s = 95 - t * 30;
+  const l = Math.max(12, 85 - t * 55) * mood;
+  return `hsl(${h.toFixed(0)},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+}
+function sparkColor() {
+  return `hsl(${40 + Math.random() * 15},95%,${75 + Math.random() * 20}%)`;
+}
+
+function buildFrame(cfg) {
+  const { number, blur, showBig, burstR, mood, sparks, settled } = cfg;
+
+  const lines = [];
+  const meta = [];
+  for (let r = 0; r < H; r++) {
+    lines.push(new Array(W).fill(' '));
+    meta.push(new Array(W).fill(null).map(() => ({ type: 'empty' })));
+  }
+
+  const cx = Math.floor(W / 2);
+  const cy = Math.floor(H / 2) - 1;
+
+  if (showBig) {
+    // ── TRIUMPH: big number with burst ──
+
+    // Radial burst
+    if (burstR > 0) {
+      for (let r = 0; r < H; r++) {
+        for (let c = 0; c < W; c++) {
+          const dx = (c - cx) * 0.48;
+          const dy = r - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const t = dist / burstR;
+          if (t < 1.0) {
+            const bi = Math.min(BURST_CH.length - 1, Math.floor(t * BURST_CH.length));
+            lines[r][c] = BURST_CH[bi];
+            meta[r][c] = { type: 'burst', t: t };
+          }
+        }
+      }
+    }
+
+    // Big "20" on top of burst
+    const d1 = DIGITS['2'];
+    const d2 = DIGITS['0'];
+    const totalW = 8 + 2 + 8; // two digits + gap
+    const sx = cx - Math.floor(totalW / 2);
+    const sy = cy - 3;
+    for (let ri = 0; ri < 7; ri++) {
+      const r = sy + ri;
+      if (r < 0 || r >= H) continue;
+      for (let ci = 0; ci < 8; ci++) {
+        const c1 = sx + ci;
+        const c2 = sx + 10 + ci;
+        if (c1 >= 0 && c1 < W && d1[ri][ci] !== ' ') {
+          lines[r][c1] = '█';
+          meta[r][c1] = { type: 'bignum' };
+        }
+        if (c2 >= 0 && c2 < W && d2[ri][ci] !== ' ') {
+          lines[r][c2] = '█';
+          meta[r][c2] = { type: 'bignum' };
+        }
+      }
+    }
+
+    // Sparkles
+    if (sparks) {
+      for (const [sr, sc] of sparks) {
+        if (sr >= 0 && sr < H && sc >= 0 && sc < W && meta[sr][sc].type === 'empty') {
+          lines[sr][sc] = '✦';
+          meta[sr][sc] = { type: 'spark' };
+        }
+      }
+    }
+  } else {
+    // ── SLOT MACHINE MODE ──
+    const numStr = String(number).padStart(2, ' ');
+    const slotLeft = cx - Math.floor((SLOT_W + 2) / 2);
+    const border = buildSlotBorder();
+
+    // Place slot border
+    for (let ri = 0; ri < border.length; ri++) {
+      const r = SLOT_TOP + ri;
+      if (r < 0 || r >= H) continue;
+      for (let ci = 0; ci < border[ri].length && (slotLeft + ci) < W; ci++) {
+        const c = slotLeft + ci;
+        if (c < 0) continue;
+        const ch = border[ri][ci];
+        if (ch !== ' ') {
+          lines[r][c] = ch;
+          meta[r][c] = { type: 'border' };
+        }
+      }
+    }
+
+    // Place the number digits inside the slot
+    const digitAreaLeft = slotLeft + 1 + Math.floor((SLOT_W - 18) / 2);
+    const digitAreaTop = SLOT_TOP + 2; // below top border + padding
+
+    for (let di = 0; di < numStr.length; di++) {
+      const ch = numStr[di];
+      if (ch === ' ') continue;
+      const glyph = DIGITS[ch];
+      if (!glyph) continue;
+      const dx = digitAreaLeft + di * 10; // 8 wide + 2 gap
+      for (let ri = 0; ri < 7; ri++) {
+        const r = digitAreaTop + ri;
+        if (r < 0 || r >= H) continue;
+        for (let ci = 0; ci < glyph[ri].length; ci++) {
+          const c = dx + ci;
+          if (c < 0 || c >= W) continue;
+          if (glyph[ri][ci] !== ' ') {
+            lines[r][c] = '█';
+            meta[r][c] = { type: 'digit', settled: !!settled };
+          }
+        }
+      }
+    }
+
+    // Blur lines during spin (motion streaks across the digit area)
+    if (blur > 0) {
+      const blurChars = ['█', '▓', '▒', '░', '─'];
+      const numStreaks = Math.floor(blur * 12);
+      for (let s = 0; s < numStreaks; s++) {
+        const r = digitAreaTop + Math.floor(srand(cfg._seed + s * 13) * 7);
+        const startC = digitAreaLeft;
+        const endC = digitAreaLeft + 17;
+        if (r < 0 || r >= H) continue;
+        for (let c = startC; c <= endC && c < W; c++) {
+          if (c < 0) continue;
+          if (meta[r][c].type === 'empty' || (blur > 0.5 && meta[r][c].type === 'digit')) {
+            const bi = Math.floor(srand(cfg._seed + s * 7 + c * 3) * blurChars.length);
+            lines[r][c] = blurChars[bi];
+            meta[r][c] = { type: 'blur' };
+          }
+        }
+      }
+    }
+
+    // Glow aura around slot when settling
+    if (settled && mood > 0.3) {
+      for (let r = SLOT_TOP - 2; r <= SLOT_TOP + border.length + 1 && r < H; r++) {
+        for (let c = slotLeft - 4; c <= slotLeft + SLOT_W + 5 && c < W; c++) {
+          if (r < 0 || c < 0) continue;
+          if (meta[r][c].type === 'empty') {
+            const dx = (c - cx) * 0.45;
+            const dy = (r - (SLOT_TOP + border.length / 2));
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 5 + mood * 4) {
+              const t = d / (5 + mood * 4);
+              if (srand(r * 41 + c * 67 + mood * 100) < (1 - t) * 0.35 * mood) {
+                lines[r][c] = t < 0.3 ? '░' : '·';
+                meta[r][c] = { type: 'slotglow', t };
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Label below slot
+    const label = settled ? '· · ·  N A T  2 0  · · ·' : '~  r o l l i n g  ~';
+    const labelRow = SLOT_TOP + border.length + 1;
+    if (labelRow < H) {
+      const ls = cx - Math.floor(label.length / 2);
+      for (let i = 0; i < label.length; i++) {
+        const c = ls + i;
+        if (c >= 0 && c < W && label[i] !== ' ') {
+          lines[labelRow][c] = label[i];
+          meta[labelRow][c] = { type: settled ? 'labelbright' : 'label' };
+        }
+      }
+    }
+  }
+
+  return { lines, meta, mood, burstR: burstR || 0 };
+}
+
+function colorizeFrame(frame) {
+  const { lines, meta, mood } = frame;
+  let html = '';
+  for (let r = 0; r < lines.length; r++) {
+    let lineHTML = '';
+    let curStyle = '';
+    let spanOpen = false;
+
+    for (let c = 0; c < lines[r].length; c++) {
+      const ch = lines[r][c];
+      const m = meta[r][c];
+      let style = '';
+      let escaped = ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '&' ? '&amp;' : ch;
+
+      if (m.type === 'digit') {
+        const nc = numColor(mood, true);
+        const glow = m.settled && mood > 0.4 ? `;text-shadow:0 0 ${4 + mood * 10}px ${nc}` : '';
+        style = `color:${nc}${glow}`;
+      } else if (m.type === 'bignum') {
+        const h = 45, s = 85 + mood * 10, l = Math.min(97, 60 + mood * 35);
+        const c1 = `hsl(${h},${s.toFixed(0)}%,${l.toFixed(0)}%)`;
+        const g = `hsla(45,90%,70%,${(mood * 0.6).toFixed(2)})`;
+        style = `color:${c1};text-shadow:0 0 10px ${g},0 0 25px ${g}`;
+      } else if (m.type === 'border') {
+        style = `color:${slotBorderColor(mood)}`;
+      } else if (m.type === 'blur') {
+        style = `color:${blurColor()}`;
+      } else if (m.type === 'burst') {
+        style = `color:${burstFillColor(m.t, mood)}`;
+      } else if (m.type === 'spark') {
+        const sc = sparkColor();
+        style = `color:${sc};text-shadow:0 0 6px ${sc}`;
+      } else if (m.type === 'slotglow') {
+        const gl = 18 + (1 - m.t) * 25 * mood;
+        style = `color:hsl(45,55%,${gl.toFixed(0)}%)`;
+      } else if (m.type === 'label') {
+        style = `color:hsl(0,0%,${15 + mood * 10}%)`;
+      } else if (m.type === 'labelbright') {
+        const lc = `hsl(45,${50 + mood * 40}%,${40 + mood * 45}%)`;
+        style = mood > 0.5 ? `color:${lc};text-shadow:0 0 6px ${lc}` : `color:${lc}`;
+      } else {
+        if (spanOpen) { lineHTML += '</span>'; spanOpen = false; curStyle = ''; }
+        lineHTML += escaped;
+        continue;
+      }
+
+      if (style === curStyle && spanOpen) {
+        lineHTML += escaped;
+      } else {
+        if (spanOpen) lineHTML += '</span>';
+        lineHTML += `<span style="${style}">${escaped}`;
+        spanOpen = true;
+        curStyle = style;
+      }
+    }
+    if (spanOpen) { lineHTML += '</span>'; spanOpen = false; }
+    html += lineHTML + '\n';
+  }
+  return html;
+}
+
+// ── SPARK SETS ──
+const SP = [
+  [[0,3],[0,44],[2,1],[2,46],[4,0],[4,47],[17,8],[17,39],[19,15],[19,32],[1,23]],
+  [[1,8],[1,39],[3,2],[3,45],[5,0],[5,47],[18,12],[18,35],[0,24],[16,5],[16,42]],
+  [[0,12],[0,35],[2,5],[2,42],[6,1],[6,46],[17,3],[17,44],[19,20],[19,27],[1,18],[1,29]],
+];
+
+// Numbers that flash during the spin (the "randomness")
+const SPIN_NUMS = [14, 7, 3, 19, 11, 8, 16, 2, 13, 5, 17, 9, 1, 20];
+
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  FRAME CONFIGS — 30 frames                                ║
+// ╚═══════════════════════════════════════════════════════════╝
+
+const FC = [
+  // ── Fast spin (0-6): numbers whipping by ──
+  { number:SPIN_NUMS[0],  blur:0.9, showBig:false, burstR:0, mood:0.05, sparks:null, settled:false, _seed:100 },
+  { number:SPIN_NUMS[1],  blur:0.9, showBig:false, burstR:0, mood:0.05, sparks:null, settled:false, _seed:110 },
+  { number:SPIN_NUMS[2],  blur:0.85,showBig:false, burstR:0, mood:0.06, sparks:null, settled:false, _seed:120 },
+  { number:SPIN_NUMS[3],  blur:0.85,showBig:false, burstR:0, mood:0.06, sparks:null, settled:false, _seed:130 },
+  { number:SPIN_NUMS[4],  blur:0.8, showBig:false, burstR:0, mood:0.07, sparks:null, settled:false, _seed:140 },
+  { number:SPIN_NUMS[5],  blur:0.75,showBig:false, burstR:0, mood:0.08, sparks:null, settled:false, _seed:150 },
+  { number:SPIN_NUMS[6],  blur:0.7, showBig:false, burstR:0, mood:0.08, sparks:null, settled:false, _seed:160 },
+
+  // ── Slowing (7-10): numbers becoming readable ──
+  { number:SPIN_NUMS[7],  blur:0.5, showBig:false, burstR:0, mood:0.12, sparks:null, settled:false, _seed:200 },
+  { number:SPIN_NUMS[8],  blur:0.3, showBig:false, burstR:0, mood:0.18, sparks:null, settled:false, _seed:210 },
+  { number:SPIN_NUMS[9],  blur:0.15,showBig:false, burstR:0, mood:0.25, sparks:null, settled:false, _seed:220 },
+  { number:SPIN_NUMS[10], blur:0.05,showBig:false, burstR:0, mood:0.32, sparks:null, settled:false, _seed:230 },
+
+  // ── Almost there (11-13): last few clicks ──
+  { number:SPIN_NUMS[11], blur:0,   showBig:false, burstR:0, mood:0.38, sparks:null, settled:false, _seed:300 },
+  { number:SPIN_NUMS[12], blur:0,   showBig:false, burstR:0, mood:0.45, sparks:null, settled:false, _seed:310 },
+  { number:20,            blur:0,   showBig:false, burstR:0, mood:0.55, sparks:null, settled:true,  _seed:320 },
+
+  // ── LANDED ON 20 (14-15): glow builds on the slot ──
+  { number:20, blur:0, showBig:false, burstR:0, mood:0.65, sparks:null, settled:true, _seed:400 },
+  { number:20, blur:0, showBig:false, burstR:0, mood:0.75, sparks:null, settled:true, _seed:410 },
+
+  // ── ERUPTION (16-19): slot disappears, big 20 explodes ──
+  { number:20, blur:0, showBig:true, burstR:4,  mood:0.80, sparks:null,  settled:true, _seed:500 },
+  { number:20, blur:0, showBig:true, burstR:8,  mood:0.90, sparks:SP[0], settled:true, _seed:510 },
+  { number:20, blur:0, showBig:true, burstR:12, mood:0.97, sparks:SP[1], settled:true, _seed:520 },
+  { number:20, blur:0, showBig:true, burstR:15, mood:1.00, sparks:SP[2], settled:true, _seed:530 }, // PEAK
+
+  // ── Triumph hold (20-24): basking ──
+  { number:20, blur:0, showBig:true, burstR:13, mood:1.00, sparks:SP[0], settled:true, _seed:600 },
+  { number:20, blur:0, showBig:true, burstR:12, mood:0.95, sparks:SP[1], settled:true, _seed:610 },
+  { number:20, blur:0, showBig:true, burstR:11, mood:0.92, sparks:SP[2], settled:true, _seed:620 },
+  { number:20, blur:0, showBig:true, burstR:12, mood:0.90, sparks:SP[0], settled:true, _seed:630 },
+  { number:20, blur:0, showBig:true, burstR:10, mood:0.85, sparks:SP[1], settled:true, _seed:640 },
+
+  // ── Fade (25-27): back to slot ──
+  { number:20, blur:0, showBig:true, burstR:6,  mood:0.65, sparks:null, settled:true, _seed:700 },
+  { number:20, blur:0, showBig:false,burstR:0,  mood:0.45, sparks:null, settled:true, _seed:710 },
+  { number:20, blur:0, showBig:false,burstR:0,  mood:0.25, sparks:null, settled:true, _seed:720 },
+
+  // ── Reset (28-29) ──
+  { number:20, blur:0, showBig:false,burstR:0, mood:0.10, sparks:null, settled:false, _seed:800 },
+  { number:20, blur:0, showBig:false,burstR:0, mood:0.04, sparks:null, settled:false, _seed:810 },
+];
+
+const frameData = FC.map(cfg => {
+  const frame = buildFrame(cfg);
+  const html = colorizeFrame(frame);
+  const isBig = cfg.showBig;
+  const glowR = isBig ? (cfg.burstR || 0) * 5 + cfg.mood * 35 : cfg.mood * 18;
+  const glowO = isBig ? cfg.mood * 0.3 : cfg.mood * 0.08;
+  return { html, glowR, glowO, mood: cfg.mood };
+});
+
+// ── PLAYER ──
+let currentFrame = 0, playing = true, looping = true, bouncing = false, direction = 1, interval = null;
+const stage = document.getElementById('stage');
+const scrubber = document.getElementById('scrubber');
+const frameInfo = document.getElementById('frameInfo');
+const playBtn = document.getElementById('playBtn');
+scrubber.max = frameData.length - 1;
+
+function render() {
+  const fd = frameData[currentFrame];
+  stage.innerHTML = '<div style="white-space:pre">' + fd.html + '</div>';
+  scrubber.value = currentFrame;
+  frameInfo.textContent = `${currentFrame + 1} / ${frameData.length}`;
+  const r = fd.glowR, o = fd.glowO, m = fd.mood;
+  const hue = 42 + m * 8;
+  stage.style.boxShadow = r > 2
+    ? `0 0 ${r}px hsla(${hue},85%,55%,${o}), 0 0 ${r*2}px hsla(${hue},75%,45%,${o*0.4}), inset 0 0 ${r*0.3}px hsla(${hue},70%,40%,${o*0.3})`
+    : 'none';
+}
+function advance() {
+  if (bouncing) {
+    if (currentFrame + direction >= frameData.length || currentFrame + direction < 0) direction *= -1;
+    currentFrame += direction;
+  } else {
+    currentFrame++;
+    if (currentFrame >= frameData.length) {
+      if (looping) currentFrame = 0;
+      else { currentFrame = frameData.length - 1; pause(); return; }
+    }
+  }
+  render();
+}
+function getInterval() { return 1000 / document.getElementById('speed').value; }
+function play() { if (interval) clearInterval(interval); playing = true; playBtn.textContent = '⏸ Pause'; interval = setInterval(advance, getInterval()); }
+function pause() { if (interval) clearInterval(interval); playing = false; playBtn.textContent = '▶ Play'; }
+function togglePlay() { playing ? pause() : play(); }
+function updateSpeed() { if (playing) play(); }
+function scrubTo(val) { currentFrame = parseInt(val); render(); }
+function stepBack() { pause(); currentFrame = Math.max(0, currentFrame - 1); render(); }
+function stepForward() { pause(); currentFrame = Math.min(frameData.length - 1, currentFrame + 1); render(); }
+function toggleLoop() { looping = true; bouncing = false; document.getElementById('loopBtn').classList.add('active'); document.getElementById('bounceBtn').classList.remove('active'); }
+function toggleBounce() { bouncing = true; looping = false; direction = 1; document.getElementById('bounceBtn').classList.add('active'); document.getElementById('loopBtn').classList.remove('active'); }
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowLeft') stepBack();
+  if (e.code === 'ArrowRight') stepForward();
+});
+render(); play();
+</script>
+</body>
+</html>

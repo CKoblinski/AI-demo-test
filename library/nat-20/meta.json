@@ -1,0 +1,15 @@
+{
+  "id": "nat-20",
+  "name": "Natural Twenty",
+  "description": "Slot machine effect with spinning digits landing on '20', golden burst celebration at climax",
+  "theme": "dice/fate",
+  "emotion": "anticipation → triumph",
+  "momentTypes": ["epic_roll"],
+  "tags": ["dice", "nat20", "critical", "slot-machine", "celebration", "triumph", "gold"],
+  "frameCount": 30,
+  "bounceMode": false,
+  "canvasSize": { "W": 48, "H": 20 },
+  "colorPalette": "warm-gold",
+  "createdAt": "2025-01-01T00:00:00Z",
+  "source": "hand-crafted"
+}

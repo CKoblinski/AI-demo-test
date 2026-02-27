@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>D&D Shorts Factory</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>D&D Shorts Factory</h1>
+    <p class="subtitle">Drop a Zoom transcript, get Premiere-ready animations</p>
+  </header>
+
+  <main id="app">
+    <!-- Screen 1: Upload -->
+    <section id="screen-upload" class="screen active">
+      <div class="upload-card">
+        <div id="drop-zone" class="drop-zone">
+          <div class="drop-icon">&#x1F3AC;</div>
+          <p>Drop your <strong>.vtt</strong> file here</p>
+          <p class="drop-sub">or click to browse</p>
+          <input type="file" id="file-input" accept=".vtt" hidden>
+        </div>
+
+        <div class="context-box">
+          <label for="user-context">What was important this episode? <span class="optional">(optional)</span></label>
+          <textarea id="user-context" rows="3" placeholder="e.g., Bixie found the corruption ledger, there was a big fight with Vexus, Lex rolled a nat 20 on perception..."></textarea>
+        </div>
+
+        <button id="submit-btn" class="btn-primary" disabled>Analyze Transcript</button>
+      </div>
+
+      <div id="recent-sessions" class="recent-sessions">
+        <h3>Recent Sessions</h3>
+        <div id="sessions-list"></div>
+      </div>
+    </section>
+
+    <!-- Screen 2: Analyzing -->
+    <section id="screen-analyzing" class="screen">
+      <div class="status-card">
+        <div class="spinner"></div>
+        <h2 id="analyze-message">Analyzing transcript...</h2>
+        <div class="progress-bar">
+          <div id="analyze-progress" class="progress-fill" style="width: 0%"></div>
+        </div>
+        <p class="estimate">This usually takes about 2 minutes</p>
+      </div>
+    </section>
+
+    <!-- Screen 3: Plan Review -->
+    <section id="screen-plan" class="screen">
+      <h2>Your Moments</h2>
+      <p class="plan-intro">Review the clips we found. Each clip has 2-3 animation beats that play together. Click a clip to expand and see details.</p>
+
+      <div id="segments-plan" class="segments-grid"></div>
+
+      <div class="plan-actions">
+        <button id="approve-btn" class="btn-primary">Approve All &amp; Generate</button>
+        <p id="time-estimate" class="estimate"></p>
+      </div>
+    </section>
+
+    <!-- Screen 4: Generating -->
+    <section id="screen-generating" class="screen">
+      <h2>Building Animations</h2>
+      <p class="gen-intro">Generating animations sequentially (rate-limited to avoid API errors)...</p>
+
+      <div id="segments-progress" class="segments-grid"></div>
+
+      <div class="progress-bar" style="margin-top: 24px">
+        <div id="gen-progress" class="progress-fill" style="width: 0%"></div>
+      </div>
+      <p id="gen-message" class="estimate"></p>
+    </section>
+
+    <!-- Screen 5: Results -->
+    <section id="screen-results" class="screen">
+      <h2>Your Animations</h2>
+
+      <div id="segments-results" class="segments-grid"></div>
+
+      <div class="results-actions">
+        <button id="download-btn" class="btn-primary">Download All (ZIP)</button>
+        <button id="new-session-btn" class="btn-secondary">New Session</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

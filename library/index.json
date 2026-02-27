@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "lastUpdated": "2025-01-01T00:00:00Z",
+  "animations": [
+    {
+      "id": "nat-20",
+      "name": "Natural Twenty",
+      "theme": "dice/fate",
+      "emotion": "anticipation → triumph",
+      "momentTypes": ["epic_roll"],
+      "tags": ["dice", "nat20", "critical", "slot-machine", "celebration", "triumph", "gold"]
+    },
+    {
+      "id": "corruption-ledger",
+      "name": "The Ledger",
+      "theme": "knowledge/betrayal",
+      "emotion": "curiosity → dread → revelation",
+      "momentTypes": ["dramatic_reveal", "character_moment"],
+      "tags": ["book", "ledger", "corruption", "evidence", "opening", "reveal"]
+    },
+    {
+      "id": "swords-drawn",
+      "name": "The Confrontation",
+      "theme": "combat/violence",
+      "emotion": "tension → violence → dread",
+      "momentTypes": ["combat_climax", "dramatic_reveal"],
+      "tags": ["swords", "combat", "blood", "violence", "confrontation", "weapons"]
+    }
+  ]
+}
