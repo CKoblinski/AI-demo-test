@@ -1,0 +1,47 @@
+{
+  "characters": [
+    {
+      "name": "Bixie",
+      "color": "#4CAF50",
+      "race": "Halfling",
+      "class": "Rogue/Assassin",
+      "visualDescription": "Silver/white-haired halfling woman with an updo hairstyle. Sharp angular features, dark clothing, brown leather gloves. Shrewd calculating eyes with a dangerous intelligence behind them. Small stature but commanding, intimidating presence. Often has arms crossed or hand near a concealed blade.",
+      "tokenImagePath": "data/tokens/bixie.png"
+    },
+    {
+      "name": "Calli",
+      "color": "#9C27B0",
+      "race": "Winged humanoid",
+      "class": "Unknown",
+      "visualDescription": "Winged woman with silver curly hair cascading over her shoulders. Large purple and blue iridescent wings spread behind her. Dark dress with green lacing detail at the bodice. Golden bracelets on both wrists. Ethereal, otherworldly beauty with a serene but knowing expression.",
+      "tokenImagePath": "data/tokens/calli.png"
+    },
+    {
+      "name": "Eas",
+      "color": "#2196F3",
+      "race": "Blue-skinned humanoid",
+      "class": "Spellcaster",
+      "visualDescription": "Blue-skinned woman with long flowing dark hair. Wears blue robes and draped clothing with elegant folds. Adorned with gold ornate jewelry including layered necklaces and earrings. Can conjure blue magical fire in her hands. Serene and powerful presence, calm intensity in her eyes.",
+      "tokenImagePath": "data/tokens/eas.png"
+    },
+    {
+      "name": "Hodim",
+      "color": "#8B0000",
+      "race": "Aasimar",
+      "class": "Paladin",
+      "visualDescription": "Young human-presenting man with brown hair. Clean-shaven, earnest expression. Wears practical armor with a paladin's bearing. Quiet intensity and thoughtfulness. No visible divine features in his normal state.",
+      "conditionalFeatures": {
+        "wings": "Radiant golden wings manifest ONLY during smites, divine abilities, or dramatically intense divine moments. When wings appear, his eyes glow with divine light."
+      },
+      "tokenImagePath": "data/tokens/hodim.png"
+    },
+    {
+      "name": "Hojberg",
+      "color": "#FF9800",
+      "race": "Human",
+      "class": "Warrior",
+      "visualDescription": "Bald, dark-skinned muscular man with a long braided beard. Wears an open dark red robe revealing a broad chest, with a gold belt at the waist. A green-feathered weapon (possibly a glaive or polearm) strapped to his back. Confident, imposing physical presence with a warrior's bearing.",
+      "tokenImagePath": "data/tokens/hojberg.png"
+    }
+  ]
+}

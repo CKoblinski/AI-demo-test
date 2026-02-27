@@ -3,7 +3,8 @@ import { findHighlights } from './find-highlights.js';
 import { generateWithRetry } from './generate-animation.js';
 import { exportAnimation } from './export-animation.js';
 import { findMatch, getAnimationHtml, listAnimations } from './library.js';
-import { buildPixelScene } from './pixel-art-scene-builder.js';
+import { buildPixelScene, buildMomentSequences } from './pixel-art-scene-builder.js';
+import { runDirectorPipeline } from './sequence-director.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, cpSync } from 'fs';
 import { join, resolve } from 'path';
 import archiver from 'archiver';
@@ -24,7 +25,7 @@ import { createWriteStream } from 'fs';
  *   }
  */
 
-// Session states: uploaded → analyzing → plan_ready → generating → exporting → complete → failed
+// Session states: uploaded → analyzing → plan_ready → planning → storyboard_ready → generating → exporting → complete → failed
 const sessions = new Map();
 
 const INTER_ANIMATION_DELAY_MS = 35000; // 35s between API calls to stay under rate limit
@@ -369,8 +370,99 @@ export async function runGeneration(sessionId) {
 }
 
 /**
+ * Cancel an in-progress pixel art generation.
+ * Sets a flag that runPixelGeneration checks between steps.
+ */
+export function cancelGeneration(sessionId) {
+  const session = sessions.get(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+  session.cancelled = true;
+
+  // Return to the appropriate stage so user can re-submit
+  if (session.stage === 'generating') {
+    // If we had a storyboard, return to storyboard_ready so they can re-approve
+    // Otherwise return to plan_ready (moment selector)
+    if (session.storyboard) {
+      session.stage = 'storyboard_ready';
+      session.progress = { message: 'Generation cancelled — review storyboard to try again', percent: 55 };
+    } else {
+      session.stage = 'plan_ready';
+      session.progress = { message: 'Generation cancelled — pick a moment to try again', percent: 50 };
+    }
+    session.generation = null;
+    saveState(session);
+  }
+
+  return session;
+}
+
+/**
+ * Run the Director AI to plan sequences for a selected moment.
+ * Creates a storyboard that the user reviews before generation.
+ */
+export async function runDirector(sessionId, momentIndex, direction = '') {
+  const session = sessions.get(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  if (!session.highlights) throw new Error('No highlights available');
+
+  const moment = session.highlights[momentIndex];
+  if (!moment) throw new Error(`Invalid moment index: ${momentIndex}`);
+
+  session.selectedMoment = momentIndex;
+  session.direction = direction;
+  session.stage = 'planning';
+  session.progress = { message: 'Building scene context...', percent: 51 };
+  saveState(session);
+
+  try {
+    const { plan, qcResult, creativeResult, sceneContext } = await runDirectorPipeline({
+      moment,
+      direction,
+      cues: session.parsedSession?.cues || [],
+      sceneContext: session.sceneContext || null,  // Reuse cached scene context if same moment
+      onProgress: (step, message) => {
+        const percentMap = {
+          scene_context: 52,
+          planning: 53,
+          technical_qc: 54,
+          creative_qc: 54.5,
+          retry: 53,
+        };
+        session.progress = { message, percent: percentMap[step] || 53 };
+        saveState(session);
+      },
+    });
+
+    // Cache scene context for potential re-plans
+    session.sceneContext = sceneContext;
+
+    session.storyboard = {
+      plan,
+      qcResult,
+      creativeResult,
+      sceneContext,
+      approved: false,
+      createdAt: new Date().toISOString(),
+    };
+    session.stage = 'storyboard_ready';
+    session.progress = { message: 'Storyboard ready for review', percent: 55 };
+    saveState(session);
+
+    return session.storyboard;
+  } catch (err) {
+    session.stage = 'plan_ready'; // Return to moment selector on failure
+    session.error = err.message;
+    session.progress = { message: `Director AI failed: ${err.message}`, percent: 50 };
+    saveState(session);
+    throw err;
+  }
+}
+
+/**
  * Run pixel art generation for a selected moment.
- * Generates portrait, mouth variants, background, assembles scene, exports video.
+ * Uses multi-sequence pipeline if a storyboard exists (Director AI flow),
+ * otherwise falls back to the legacy single-scene pipeline.
  */
 export async function runPixelGeneration(sessionId, momentIndex, direction = '') {
   const session = sessions.get(sessionId);
@@ -383,6 +475,127 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
   session.selectedMoment = momentIndex;
   session.direction = direction;
   session.stage = 'generating';
+  session.cancelled = false;
+
+  const sceneDir = join(session.outDir, `moment_${String(momentIndex + 1).padStart(2, '0')}_${slugify(moment.title)}`);
+
+  // ── Multi-sequence pipeline (Director AI flow) ──
+  if (session.storyboard && session.storyboard.plan && session.storyboard.plan.sequences) {
+    const seqCount = session.storyboard.plan.sequences.length;
+    session.generation = {
+      status: 'generating',
+      currentSequence: 0,
+      totalSequences: seqCount,
+      sequences: session.storyboard.plan.sequences.map((s, i) => ({
+        order: i + 1,
+        type: s.type,
+        speaker: s.speaker,
+        status: 'pending',
+        assets: {},
+        cost: 0,
+      })),
+      assembly: { status: 'pending' },
+      export: { status: 'pending' },
+      totalCost: 0,
+    };
+    session.progress = { message: `Generating ${seqCount} sequences...`, percent: 55 };
+    saveState(session);
+
+    try {
+      const result = await buildMomentSequences({
+        storyboard: session.storyboard,
+        moment,
+        direction,
+        cues: session.parsedSession?.cues || [],
+        outDir: sceneDir,
+        checkCancelled: () => session.cancelled === true,
+        onProgress: (step, data) => {
+          if (step === 'plan') {
+            session.progress = { message: `Starting ${data.totalSequences} sequences (~${data.totalDurationSec}s)...`, percent: 55 };
+          } else if (step === 'sequence') {
+            const seqInfo = session.generation.sequences[data.sequenceIndex];
+            if (seqInfo) {
+              seqInfo.status = data.status;
+              if (data.cost) seqInfo.cost = data.cost;
+            }
+            session.generation.currentSequence = data.sequenceIndex;
+            if (data.status === 'generating') {
+              const pct = 55 + Math.floor((data.sequenceIndex / data.totalSequences) * 30);
+              session.progress = {
+                message: `Sequence ${data.sequenceIndex + 1}/${data.totalSequences}: ${data.type}${data.speaker ? ` (${data.speaker})` : ''}...`,
+                percent: pct,
+              };
+            } else if (data.status === 'complete') {
+              session.generation.totalCost = session.generation.sequences.reduce((s, sq) => s + (sq.cost || 0), 0);
+            }
+          } else if (step === 'asset') {
+            // Per-asset progress within a sequence
+            const seqInfo = session.generation.sequences[data.sequenceIndex];
+            if (seqInfo) {
+              seqInfo.assets[data.asset] = { status: data.status, ...(data.sizeKB ? { sizeKB: data.sizeKB } : {}) };
+            }
+            if (data.status === 'generating') {
+              const pct = 55 + Math.floor((data.sequenceIndex / seqCount) * 30);
+              const assetLabel = data.asset === 'portrait' ? `portrait for ${data.speaker || 'character'}`
+                : data.asset === 'mouthVariants' ? 'mouth variants'
+                : data.asset === 'background' ? 'background'
+                : data.asset === 'actionFrames' ? `${data.frameCount || 3} action frames`
+                : data.asset;
+              session.progress = {
+                message: `Seq ${data.sequenceIndex + 1}/${seqCount}: generating ${assetLabel}...`,
+                percent: pct,
+              };
+            }
+          } else if (step === 'assembly') {
+            session.generation.assembly = { status: data.status };
+            if (data.status === 'assembling') {
+              session.progress = { message: data.detail || 'Assembling scenes...', percent: 87 };
+            } else if (data.status === 'complete') {
+              session.progress = { message: 'Exporting video...', percent: 90 };
+            }
+          } else if (step === 'export') {
+            session.generation.export = { status: data.status, ...data };
+            if (data.status === 'exporting') {
+              const detail = data.detail || 'Exporting video (Puppeteer + ffmpeg)...';
+              session.progress = { message: detail, percent: 92 };
+            }
+          }
+          saveState(session);
+        },
+      });
+
+      // Final state
+      session.generation.status = 'complete';
+      session.generation.totalCost = result.totalCost;
+      const hasExports = result.sequenceExports?.some(e => e.mp4);
+      session.generation.export = {
+        status: hasExports ? 'complete' : 'failed',
+        files: {
+          playerHtml: result.playerHtml,
+        },
+        sequenceFiles: result.sequenceExports || [],
+      };
+      session.stage = 'complete';
+      session.progress = { message: 'Scene complete!', percent: 100 };
+      saveState(session);
+
+    } catch (err) {
+      if (session.cancelled) {
+        console.log(`Generation cancelled for session ${sessionId}`);
+        return;
+      }
+      session.generation.status = 'failed';
+      session.stage = 'failed';
+      session.error = err.message;
+      session.progress = { message: `Generation failed: ${err.message}`, percent: 0 };
+      saveState(session);
+      throw err;
+    }
+
+    return;
+  }
+
+  // ── Legacy single-scene pipeline (no storyboard) ──
   session.generation = {
     status: 'generating',
     portrait: { status: 'pending' },
@@ -395,14 +608,13 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
   session.progress = { message: 'Generating pixel art scene...', percent: 55 };
   saveState(session);
 
-  const sceneDir = join(session.outDir, `moment_${String(momentIndex + 1).padStart(2, '0')}_${slugify(moment.title)}`);
-
   try {
     const result = await buildPixelScene({
       moment,
       direction,
       cues: session.parsedSession?.cues || [],
       outDir: sceneDir,
+      checkCancelled: () => session.cancelled === true,
       onProgress: (step, data) => {
         // Update session.generation with per-asset progress
         if (step === 'parsed') {
@@ -453,6 +665,11 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
     saveState(session);
 
   } catch (err) {
+    // If cancelled, cancelGeneration() already set the right state
+    if (session.cancelled) {
+      console.log(`Generation cancelled for session ${sessionId}`);
+      return;
+    }
     session.generation.status = 'failed';
     session.stage = 'failed';
     session.error = err.message;
@@ -570,6 +787,53 @@ export function createSessionZip(sessionId) {
 
     archive.finalize();
   });
+}
+
+/**
+ * Update the storyboard plan with user edits from the interactive editor.
+ * Replaces the plan's sequences with the edited version.
+ *
+ * @param {string} sessionId
+ * @param {object} editedPlan - The full edited plan object (sequences, totalDurationSec, etc.)
+ * @returns {object} Updated session
+ */
+export function updateStoryboard(sessionId, editedPlan) {
+  const session = sessions.get(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  if (!session.storyboard) throw new Error('No storyboard to update');
+
+  // Merge user edits into the existing storyboard plan
+  session.storyboard.plan.sequences = editedPlan.sequences;
+  session.storyboard.plan.totalDurationSec = editedPlan.totalDurationSec ||
+    editedPlan.sequences.reduce((sum, s) => sum + (s.durationSec || 0), 0);
+  session.storyboard.plan.estimatedCost = editedPlan.estimatedCost ||
+    session.storyboard.plan.estimatedCost;
+  session.storyboard.editedAt = new Date().toISOString();
+
+  // Recalculate startOffsets and order
+  let offset = 0;
+  session.storyboard.plan.sequences.forEach((seq, i) => {
+    seq.order = i + 1;
+    seq.startOffsetSec = offset;
+    offset += seq.durationSec || 0;
+  });
+  session.storyboard.plan.totalDurationSec = offset;
+
+  // Recalculate cost
+  session.storyboard.plan.estimatedCost = session.storyboard.plan.sequences.reduce((sum, seq) => {
+    if (seq.reuseBackgroundFrom) {
+      // Reused BG saves $0.04
+      if (seq.type === 'dialogue' || seq.type === 'dm_description') return sum + 0.12;
+    }
+    if (seq.type === 'dialogue' || seq.type === 'dm_description') return sum + 0.16;
+    if (seq.type === 'close_up') return sum + 0.04 * (seq.frameCount || 3);
+    if (seq.type === 'establishing_shot') return sum + 0.04;
+    if (seq.type === 'impact') return sum; // $0.00
+    return sum;
+  }, 0);
+
+  saveState(session);
+  return session;
 }
 
 // ── Helpers ──

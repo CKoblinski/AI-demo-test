@@ -62,8 +62,32 @@
       </div>
 
       <div class="plan-actions">
-        <button id="generate-btn" class="btn-primary" disabled>Generate Pixel Art Scene</button>
-        <p class="estimate">~$0.16 per scene &middot; ~2 min generation time</p>
+        <button id="generate-btn" class="btn-primary" disabled>Plan Sequences</button>
+        <p class="estimate">Director AI plans the animation sequences, then you review before generating</p>
+      </div>
+    </section>
+
+    <!-- Screen 3.5: Storyboard Review & Editor -->
+    <section id="screen-storyboard" class="screen">
+      <h2>Storyboard Editor</h2>
+      <p class="storyboard-intro">Review and edit the Director AI's sequence plan. Change types, rewrite descriptions, reorder, or add new sequences.</p>
+
+      <div id="storyboard-sequences" class="storyboard-sequences"></div>
+
+      <div class="sb-add-row">
+        <button id="add-sequence-btn" class="btn-secondary sb-add-btn">+ Add Sequence</button>
+      </div>
+
+      <div id="storyboard-summary" class="storyboard-summary"></div>
+
+      <div id="storyboard-scene-context" class="storyboard-scene-context"></div>
+
+      <div id="storyboard-qc" class="storyboard-qc"></div>
+
+      <div class="storyboard-actions">
+        <button id="approve-storyboard-btn" class="btn-primary">Save &amp; Generate</button>
+        <button id="replan-btn" class="btn-secondary">Re-plan with Different Direction</button>
+        <button id="back-to-moments-btn" class="btn-secondary">Back to Moments</button>
       </div>
     </section>
 
@@ -72,6 +96,7 @@
       <h2>Building Your Scene</h2>
       <p class="gen-intro">Generating pixel art assets via Gemini...</p>
 
+      <!-- Legacy single-scene progress (hidden when using multi-sequence) -->
       <div id="gen-steps" class="gen-steps">
         <div class="gen-step" id="step-portrait">
           <div class="gen-step-icon"></div>
@@ -112,11 +137,17 @@
         </div>
       </div>
 
+      <!-- Multi-sequence progress (shown when storyboard exists) -->
+      <div id="gen-sequences" class="gen-sequences" style="display: none"></div>
+
       <div class="progress-bar" style="margin-top: 24px">
         <div id="gen-progress" class="progress-fill" style="width: 0%"></div>
       </div>
       <p id="gen-message" class="estimate"></p>
       <p id="gen-cost" class="estimate"></p>
+      <div class="gen-actions">
+        <button id="cancel-gen-btn" class="btn-secondary btn-cancel">Cancel Generation</button>
+      </div>
     </section>
 
     <!-- Screen 5: Results -->
@@ -129,6 +160,7 @@
 
       <div class="results-actions">
         <button id="download-btn" class="btn-primary">Download All (ZIP)</button>
+        <button id="edit-regen-btn" class="btn-secondary">Edit Direction &amp; Regenerate</button>
         <button id="pick-another-btn" class="btn-secondary">Pick Another Moment</button>
         <button id="new-session-btn" class="btn-secondary">New Session</button>
       </div>

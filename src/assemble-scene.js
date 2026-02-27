@@ -80,6 +80,7 @@ export function assembleAnimatedDialogueScene(params) {
     backgroundMimeType = 'image/png',
     characterName,
     characterColor = '#e8a033',
+    backgroundMood = 'dark',
     dialogueLines,
     mouthCycleMs = 150,
     linePauseMs = 1200,
@@ -116,6 +117,7 @@ export function assembleAnimatedDialogueScene(params) {
   html = html.replace(/\{\{MOUTH_CYCLE_MS\}\}/g, String(mouthCycleMs));
   html = html.replace(/\{\{LINE_PAUSE_MS\}\}/g, String(linePauseMs));
   html = html.replace(/\{\{PORTRAIT_COUNT\}\}/g, String(portraitFrames.length));
+  html = html.replace(/\{\{BACKGROUND_MOOD\}\}/g, escapeHtml(backgroundMood));
 
   return html;
 }
@@ -140,6 +142,76 @@ export function assembleAnimatedAndSave(params, outputPath) {
   writeFileSync(outputPath, html);
   console.log(`  Scene saved: ${outputPath}`);
   return outputPath;
+}
+
+/**
+ * Assemble an action bounce scene from template + generated action frames.
+ *
+ * @param {object} params
+ * @param {Array<{ base64: string, mimeType?: string }>} params.frameImages - Action frames (index 0 = start, last = peak)
+ * @param {number} [params.frameDurationMs=300] - Ms per frame in the bounce loop
+ * @param {string} [params.backgroundMood='neutral'] - Mood for color theming
+ * @param {string} [params.transitionIn='cut'] - 'cut' | 'fade' | 'flash'
+ * @param {string} [params.sceneTitle] - HTML page title
+ * @returns {string} Complete self-contained HTML
+ */
+export function assembleActionBounceScene(params) {
+  const {
+    frameImages,
+    frameDurationMs = 300,
+    backgroundMood = 'neutral',
+    transitionIn = 'cut',
+    sceneTitle = 'Action — D&D Shorts',
+  } = params;
+
+  const template = readFileSync(join(TEMPLATES_DIR, 'action-bounce.html'), 'utf-8');
+
+  // Build frame <img> tags
+  const frameImgs = frameImages.map((frame, i) => {
+    const mime = frame.mimeType || 'image/png';
+    const src = `data:${mime};base64,${frame.base64}`;
+    const activeClass = i === 0 ? ' active' : '';
+    return `<img class="action-frame${activeClass}" src="${src}" data-frame="${i}" alt="action frame ${i}">`;
+  }).join('\n    ');
+
+  let html = template;
+  html = html.replace(/\{\{SCENE_TITLE\}\}/g, escapeHtml(sceneTitle));
+  html = html.replace(/\{\{FRAME_IMGS\}\}/g, frameImgs);
+  html = html.replace(/\{\{FRAME_COUNT\}\}/g, String(frameImages.length));
+  html = html.replace(/\{\{FRAME_DURATION_MS\}\}/g, String(frameDurationMs));
+  html = html.replace(/\{\{BACKGROUND_MOOD\}\}/g, backgroundMood);
+  html = html.replace(/\{\{TRANSITION_IN\}\}/g, transitionIn);
+
+  return html;
+}
+
+/**
+ * Assemble the master sequence player that plays multiple sequences in order.
+ *
+ * @param {object} params
+ * @param {Array<object>} params.sequences - Array of sequence data objects with data URIs
+ * @param {number} params.totalDurationMs - Total duration across all sequences
+ * @param {string} [params.sceneTitle] - HTML page title
+ * @returns {string} Complete self-contained HTML
+ */
+export function assembleSequencePlayerScene(params) {
+  const {
+    sequences,
+    totalDurationMs,
+    sceneTitle = 'D&D Shorts',
+  } = params;
+
+  const template = readFileSync(join(TEMPLATES_DIR, 'sequence-player.html'), 'utf-8');
+
+  // Serialize sequences to JSON (contains data URIs)
+  const sequencesJson = JSON.stringify(sequences);
+
+  let html = template;
+  html = html.replace(/\{\{SCENE_TITLE\}\}/g, escapeHtml(sceneTitle));
+  html = html.replace(/\{\{SEQUENCES_JSON\}\}/g, sequencesJson);
+  html = html.replace(/\{\{TOTAL_DURATION_MS\}\}/g, String(totalDurationMs));
+
+  return html;
 }
 
 function escapeHtml(str) {

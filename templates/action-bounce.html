@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{SCENE_TITLE}}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── 9:16 Vertical Frame ── */
+  #scene {
+    position: relative;
+    width: 1080px;
+    height: 1920px;
+    overflow: hidden;
+    background: #000;
+    image-rendering: pixelated;
+  }
+
+  /* ── Action Frames ── */
+  .action-frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    image-rendering: pixelated;
+    opacity: 0;
+    z-index: 1;
+  }
+
+  .action-frame.active {
+    opacity: 1;
+  }
+
+  /* ── Subtle ambient brightness (smooth, barely perceptible) ── */
+  #frame-container {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    animation: frame-breathe 3s ease-in-out infinite;
+  }
+
+  @keyframes frame-breathe {
+    0%, 100% { filter: brightness(0.98); }
+    50%      { filter: brightness(1.02); }
+  }
+
+  /* ── Vignette Overlay ── */
+  #vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.65) 100%);
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  /* ── Screen Shake ── */
+  @keyframes screen-shake {
+    0%   { transform: translate(0, 0); }
+    10%  { transform: translate(-12px, 8px); }
+    20%  { transform: translate(10px, -14px); }
+    30%  { transform: translate(-8px, -6px); }
+    40%  { transform: translate(14px, 10px); }
+    50%  { transform: translate(-6px, 12px); }
+    60%  { transform: translate(8px, -10px); }
+    70%  { transform: translate(-14px, -4px); }
+    80%  { transform: translate(6px, 8px); }
+    90%  { transform: translate(-4px, -12px); }
+    100% { transform: translate(0, 0); }
+  }
+
+  #scene.shake {
+    animation: screen-shake 0.35s ease-out;
+  }
+
+  /* ── White Flash Transition ── */
+  #flash-overlay {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    z-index: 20;
+    opacity: 0;
+    pointer-events: none;
+    transition: none;
+  }
+
+  #flash-overlay.flash-active {
+    opacity: 1;
+  }
+
+  #flash-overlay.flash-fade {
+    transition: opacity 0.3s ease-out;
+    opacity: 0;
+  }
+
+  /* ── Ambient Particles ── */
+  .particle {
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: rgba(255, 180, 80, 0.2);
+    pointer-events: none;
+    z-index: 4;
+  }
+
+  /* ── Mood-based color tinting (subtle border glow) ── */
+  #mood-glow {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    box-shadow: inset 0 0 120px rgba(180, 60, 30, 0.15);
+  }
+
+  /* ── Impact Flash (on peak frame) ── */
+  #impact-flash {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    pointer-events: none;
+    opacity: 0;
+    background: radial-gradient(circle at center, rgba(255,255,255,0.6) 0%, transparent 60%);
+    transition: opacity 0.15s ease-out;
+  }
+
+  #impact-flash.burst {
+    opacity: 1;
+    transition: none;
+  }
+
+  /* ── Responsive Scaling ── */
+  @media (max-height: 1920px) {
+    #scene {
+      transform-origin: top center;
+      transform: scale(calc(100vh / 1920));
+    }
+  }
+</style>
+</head>
+<body>
+
+<div id="scene">
+  <!-- Frame container with torch flicker -->
+  <div id="frame-container">
+    {{FRAME_IMGS}}
+  </div>
+
+  <!-- Mood-based inner glow -->
+  <div id="mood-glow"></div>
+
+  <!-- Ambient particles -->
+  <div id="particles"></div>
+
+  <!-- Vignette overlay -->
+  <div id="vignette"></div>
+
+  <!-- Impact flash on peak frame -->
+  <div id="impact-flash"></div>
+
+  <!-- White flash for transition-in -->
+  <div id="flash-overlay"></div>
+</div>
+
+<script>
+  // ══════════════════════════════════════════
+  // Configuration (injected by assembler)
+  // ══════════════════════════════════════════
+  const FRAME_COUNT = {{FRAME_COUNT}};
+  const FRAME_DURATION_MS = {{FRAME_DURATION_MS}};
+  const TRANSITION_IN = '{{TRANSITION_IN}}';
+  const BACKGROUND_MOOD = '{{BACKGROUND_MOOD}}';
+
+  // ══════════════════════════════════════════
+  // Build Bounce Sequence
+  // ══════════════════════════════════════════
+  // For N frames: 0, 1, 2, ..., N-1, ..., 2, 1  (then repeats)
+  // Peak frame is at index N-1 in the sequence (the midpoint)
+  function buildBounceSequence(count) {
+    if (count <= 1) return [0];
+    const seq = [];
+    // Forward: 0 → N-1
+    for (let i = 0; i < count; i++) seq.push(i);
+    // Reverse: N-2 → 1 (skip N-1 to avoid double, skip 0 to avoid double on loop)
+    for (let i = count - 2; i >= 1; i--) seq.push(i);
+    return seq;
+  }
+
+  const bounceSeq = buildBounceSequence(FRAME_COUNT);
+  const peakFrameIndex = FRAME_COUNT - 1; // The last forward frame is the peak
+
+  // ══════════════════════════════════════════
+  // Frame Elements
+  // ══════════════════════════════════════════
+  const frames = document.querySelectorAll('.action-frame');
+  const scene = document.getElementById('scene');
+  const impactFlash = document.getElementById('impact-flash');
+  const flashOverlay = document.getElementById('flash-overlay');
+
+  let seqIndex = 0;
+  let cycleTimer = null;
+  let isFirstCycle = true;
+
+  function showFrame(frameNum) {
+    frames.forEach((f, i) => {
+      f.classList.toggle('active', i === frameNum);
+    });
+  }
+
+  // ══════════════════════════════════════════
+  // Screen Shake on Peak
+  // ══════════════════════════════════════════
+  function triggerShake() {
+    scene.classList.remove('shake');
+    // Force reflow to restart animation
+    void scene.offsetWidth;
+    scene.classList.add('shake');
+  }
+
+  function triggerImpactFlash() {
+    impactFlash.classList.add('burst');
+    setTimeout(() => {
+      impactFlash.classList.remove('burst');
+    }, 80);
+  }
+
+  // ══════════════════════════════════════════
+  // Frame Cycling
+  // ══════════════════════════════════════════
+  function advanceFrame() {
+    seqIndex = (seqIndex + 1) % bounceSeq.length;
+    const frameNum = bounceSeq[seqIndex];
+
+    showFrame(frameNum);
+
+    // Trigger shake + impact flash on peak frame
+    if (frameNum === peakFrameIndex) {
+      triggerShake();
+      triggerImpactFlash();
+    }
+
+    // On loop restart (seqIndex wraps to 0), mark first cycle done
+    if (seqIndex === 0) {
+      isFirstCycle = false;
+    }
+  }
+
+  // ══════════════════════════════════════════
+  // Transition In
+  // ══════════════════════════════════════════
+  function doTransitionIn(callback) {
+    if (TRANSITION_IN === 'flash') {
+      // Start with white screen, then fade out
+      flashOverlay.classList.add('flash-active');
+      // Show first frame behind the flash
+      showFrame(bounceSeq[0]);
+
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          flashOverlay.classList.add('flash-fade');
+          flashOverlay.classList.remove('flash-active');
+          setTimeout(callback, 350);
+        }, 100);
+      });
+
+    } else if (TRANSITION_IN === 'fade') {
+      // Fade in from black: scene starts at opacity 0
+      scene.style.opacity = '0';
+      scene.style.transition = 'opacity 0.5s ease-in';
+      showFrame(bounceSeq[0]);
+
+      requestAnimationFrame(() => {
+        scene.style.opacity = '1';
+        setTimeout(callback, 550);
+      });
+
+    } else {
+      // "cut" — immediate display
+      showFrame(bounceSeq[0]);
+      callback();
+    }
+  }
+
+  // ══════════════════════════════════════════
+  // Mood-Based Color Theming
+  // ══════════════════════════════════════════
+  function applyMoodTheme(mood) {
+    const moodGlow = document.getElementById('mood-glow');
+    const particleColor = { r: 255, g: 180, b: 80, a: 0.2 };
+
+    switch (mood) {
+      case 'tense':
+        moodGlow.style.boxShadow = 'inset 0 0 150px rgba(200, 40, 20, 0.2)';
+        particleColor.r = 255; particleColor.g = 100; particleColor.b = 50;
+        break;
+      case 'dark':
+        moodGlow.style.boxShadow = 'inset 0 0 180px rgba(20, 10, 40, 0.35)';
+        particleColor.r = 120; particleColor.g = 80; particleColor.b = 200; particleColor.a = 0.15;
+        break;
+      case 'epic':
+        moodGlow.style.boxShadow = 'inset 0 0 140px rgba(255, 160, 30, 0.2)';
+        particleColor.r = 255; particleColor.g = 200; particleColor.b = 60;
+        break;
+      case 'magic':
+        moodGlow.style.boxShadow = 'inset 0 0 160px rgba(80, 120, 255, 0.2)';
+        particleColor.r = 100; particleColor.g = 150; particleColor.b = 255; particleColor.a = 0.25;
+        break;
+      case 'blood':
+        moodGlow.style.boxShadow = 'inset 0 0 180px rgba(160, 10, 10, 0.3)';
+        particleColor.r = 200; particleColor.g = 30; particleColor.b = 30; particleColor.a = 0.2;
+        break;
+      default:
+        // Neutral warm glow
+        moodGlow.style.boxShadow = 'inset 0 0 120px rgba(180, 60, 30, 0.15)';
+        break;
+    }
+
+    return particleColor;
+  }
+
+  // ══════════════════════════════════════════
+  // Ambient Particles
+  // ══════════════════════════════════════════
+  const particlesEl = document.getElementById('particles');
+
+  function createParticle(color) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const x = Math.random() * 1080;
+    const duration = 8 + Math.random() * 12;
+    const delay = Math.random() * 10;
+    const size = 2 + Math.random() * 4;
+    const drift = ((Math.random() - 0.5) * 200).toFixed(0);
+
+    p.style.cssText = `
+      left: ${x}px;
+      bottom: -20px;
+      width: ${size}px;
+      height: ${size}px;
+      background: rgba(${color.r}, ${color.g}, ${color.b}, ${color.a});
+      opacity: ${(0.1 + Math.random() * 0.3).toFixed(2)};
+      animation: float-up-${drift} ${duration}s ${delay}s linear infinite;
+    `;
+
+    // Create unique keyframe for this drift amount
+    if (!document.querySelector(`style[data-drift="${drift}"]`)) {
+      const style = document.createElement('style');
+      style.dataset.drift = drift;
+      style.textContent = `
+        @keyframes float-up-${drift} {
+          0%   { transform: translateY(0) translateX(0); opacity: 0; }
+          10%  { opacity: 0.3; }
+          90%  { opacity: 0.1; }
+          100% { transform: translateY(-2100px) translateX(${drift}px); opacity: 0; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    particlesEl.appendChild(p);
+  }
+
+  // ══════════════════════════════════════════
+  // Start!
+  // ══════════════════════════════════════════
+  const particleColor = applyMoodTheme(BACKGROUND_MOOD);
+  for (let i = 0; i < 18; i++) createParticle(particleColor);
+
+  // Transition in, then begin bounce cycle
+  doTransitionIn(() => {
+    cycleTimer = setInterval(advanceFrame, FRAME_DURATION_MS);
+  });
+
+  // Clean up shake class after animation ends
+  scene.addEventListener('animationend', (e) => {
+    if (e.animationName === 'screen-shake') {
+      scene.classList.remove('shake');
+    }
+  });
+</script>
+
+</body>
+</html>

@@ -5,8 +5,9 @@ import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
   createSession, getSession, listSessions,
-  runAnalysis, runGeneration, runPixelGeneration,
-  regenerateAnimation, createSessionZip,
+  runAnalysis, runGeneration, runDirector, runPixelGeneration,
+  cancelGeneration, regenerateAnimation, createSessionZip,
+  updateStoryboard,
 } from './src/job-runner.js';
 import { listAnimations, getAnimationHtml } from './src/library.js';
 
@@ -108,6 +109,11 @@ app.get('/api/sessions/:id', (req, res) => {
     response.direction = session.direction ?? null;
   }
 
+  // Include storyboard (sequence plan from Director AI)
+  if (session.storyboard) {
+    response.storyboard = session.storyboard;
+  }
+
   // Include pixel art generation progress
   if (session.generation) {
     response.generation = session.generation;
@@ -193,12 +199,63 @@ app.post('/api/sessions/:id/approve', async (req, res) => {
   res.json({ message: 'Generation started', stage: 'generating' });
 });
 
+// ─── Update Storyboard (save user edits) ───
+app.post('/api/sessions/:id/storyboard', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (!session.storyboard) return res.status(400).json({ error: 'No storyboard to update' });
+
+  const { sequences } = req.body;
+  if (!sequences || !Array.isArray(sequences)) {
+    return res.status(400).json({ error: 'sequences array is required' });
+  }
+
+  try {
+    const updated = updateStoryboard(session.id, { sequences });
+    res.json({
+      message: 'Storyboard updated',
+      totalDurationSec: updated.storyboard.plan.totalDurationSec,
+      estimatedCost: updated.storyboard.plan.estimatedCost,
+      sequenceCount: updated.storyboard.plan.sequences.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Pixel Art: Plan Sequences (Director AI) ───
+app.post('/api/sessions/:id/plan', async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const allowedStages = ['plan_ready', 'storyboard_ready', 'complete', 'failed'];
+  if (!allowedStages.includes(session.stage)) {
+    return res.status(400).json({ error: `Cannot plan — session is in stage: ${session.stage}` });
+  }
+
+  const { momentIndex, direction } = req.body;
+  if (momentIndex === undefined || momentIndex === null) {
+    return res.status(400).json({ error: 'momentIndex is required' });
+  }
+  if (!session.highlights || momentIndex >= session.highlights.length) {
+    return res.status(400).json({ error: `Invalid momentIndex: ${momentIndex}` });
+  }
+
+  // Start Director AI in background
+  runDirector(session.id, momentIndex, direction || '').catch(err => {
+    console.error(`Director failed for session ${session.id}:`, err.message);
+  });
+
+  res.json({ message: 'Director AI planning sequences...', stage: 'planning' });
+});
+
 // ─── Pixel Art Generation ───
-// Select a moment and generate pixel art dialogue scene
+// Generate pixel art for approved storyboard (or direct single-scene fallback)
 app.post('/api/sessions/:id/generate', async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });
-  if (session.stage !== 'plan_ready') {
+  const allowedStages = ['plan_ready', 'storyboard_ready', 'complete', 'failed'];
+  if (!allowedStages.includes(session.stage)) {
     return res.status(400).json({ error: `Cannot generate — session is in stage: ${session.stage}` });
   }
 
@@ -217,6 +274,19 @@ app.post('/api/sessions/:id/generate', async (req, res) => {
   });
 
   res.json({ message: 'Pixel art generation started', stage: 'generating' });
+});
+
+// Cancel in-progress generation
+app.post('/api/sessions/:id/cancel', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  try {
+    const updated = cancelGeneration(session.id);
+    res.json({ message: 'Generation cancelled', stage: updated.stage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Reject a specific animation within a clip and regenerate

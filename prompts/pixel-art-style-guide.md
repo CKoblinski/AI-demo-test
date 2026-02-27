@@ -10,9 +10,14 @@ This document defines the visual aesthetic for all Gemini-generated pixel art. I
 
 ### Style Prefix (prepended to all Gemini prompts)
 ```
-16-bit pixel art, RPG game style inspired by Octopath Traveler and Final Fantasy VI,
-retro gaming aesthetic with modern lighting and detail,
+16-bit SNES-era pixel art with visible pixel grid, limited color palette (max 24 colors),
+no anti-aliasing, no smooth gradients, crisp hard-edged pixels.
+Style of Octopath Traveler, Final Fantasy VI, Chrono Trigger.
+Hand-pixeled aesthetic, NOT AI-generated looking, NOT anime, NOT smooth digital art.
+Chunky defined pixels, dithering for shading, retro RPG game sprite style,
 ```
+
+**Key enforcement**: The prefix explicitly rejects AI-art hallmarks (smooth gradients, anime style, anti-aliasing) and demands visible pixel structure. This is critical for maintaining the retro aesthetic.
 
 ## Format & Resolution
 

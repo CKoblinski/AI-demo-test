@@ -32,7 +32,7 @@ export async function findHighlights(session, options = {}) {
     throw new Error('ANTHROPIC_API_KEY is required. Set it in .env or pass via options.');
   }
 
-  const model = options.model || 'claude-sonnet-4-20250514';
+  const model = options.model || 'claude-haiku-4-5-20251001';
   const systemPrompt = readFileSync(PROMPT_PATH, 'utf-8');
 
   // Build the transcript payload for Claude
@@ -87,10 +87,10 @@ export async function findHighlights(session, options = {}) {
 
     console.log(`\n  Chunk ${ci + 1}/${chunks.length}: cues ${chunk.startId}-${chunk.endId} (~${Math.round(userMessage.length / CHARS_PER_TOKEN / 1000)}k tokens)`);
 
-    // Wait between chunks to respect rate limits
+    // Wait between chunks to respect rate limits (Haiku has higher limits)
     if (ci > 0) {
-      const waitSec = 65; // wait just over a minute between chunks
-      console.log(`  Waiting ${waitSec}s for rate limit reset...`);
+      const waitSec = model.includes('haiku') ? 5 : 65;
+      console.log(`  Waiting ${waitSec}s between chunks...`);
       await sleep(waitSec * 1000);
     }
 
@@ -120,13 +120,13 @@ export async function findHighlights(session, options = {}) {
  * Call Claude with retry + exponential backoff for rate limits.
  */
 async function callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, maxRetries = 3) {
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: 120000 });
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await client.messages.create({
         model,
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       });
@@ -138,15 +138,30 @@ async function callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, max
 
       // Try to parse JSON — Claude might wrap it in ```json``` blocks
       let jsonStr = responseText;
-      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1];
+
+      // Try closed code blocks first
+      const closedMatch = responseText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+      if (closedMatch) {
+        jsonStr = closedMatch[1];
+      } else {
+        // Handle unclosed code blocks (response truncated before closing ```)
+        const openMatch = responseText.match(/```(?:json)?\s*\n?([\s\S]*)/);
+        if (openMatch) {
+          jsonStr = openMatch[1];
+        }
       }
 
+      // Try parsing as-is first
       try {
         const highlights = JSON.parse(jsonStr.trim());
         return Array.isArray(highlights) ? highlights : [highlights];
       } catch (e) {
+        // If JSON was truncated, try to salvage complete objects from the array
+        const salvaged = salvageTruncatedJSON(jsonStr.trim());
+        if (salvaged && salvaged.length > 0) {
+          console.log(`  Salvaged ${salvaged.length} highlights from truncated response`);
+          return salvaged;
+        }
         console.error('Failed to parse Claude response as JSON:');
         console.error(responseText.substring(0, 500));
         throw new Error(`Claude returned non-JSON response: ${e.message}`);
@@ -157,10 +172,17 @@ async function callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, max
         err.message?.includes('rate_limit') ||
         err.message?.includes('429');
 
-      if (isRateLimit && attempt < maxRetries) {
-        // Parse retry-after header or use exponential backoff
-        const waitSec = Math.min(60 * attempt, 180); // 60s, 120s, 180s
-        console.log(`  Rate limited (attempt ${attempt}/${maxRetries}). Waiting ${waitSec}s...`);
+      // Check for transient connection/server errors
+      const isTransient = isRateLimit ||
+        err.status === 500 || err.status === 502 || err.status === 503 || err.status === 529 ||
+        err.message?.includes('Connection error') ||
+        err.message?.includes('ECONNRESET') ||
+        err.message?.includes('ETIMEDOUT') ||
+        err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
+
+      if (isTransient && attempt < maxRetries) {
+        const waitSec = isRateLimit ? Math.min(60 * attempt, 180) : 10 * attempt;
+        console.log(`  ${isRateLimit ? 'Rate limited' : 'Transient error'} (attempt ${attempt}/${maxRetries}): ${err.message}. Waiting ${waitSec}s...`);
         await sleep(waitSec * 1000);
         continue;
       }
@@ -293,6 +315,49 @@ function deduplicateHighlights(highlights) {
   }
 
   return kept;
+}
+
+/**
+ * Try to salvage complete JSON objects from a truncated JSON array.
+ * E.g., if the response is `[{...}, {... (cut off)`, extract the complete objects.
+ */
+function salvageTruncatedJSON(str) {
+  // Must start with [
+  if (!str.startsWith('[')) return null;
+
+  const results = [];
+  let depth = 0;
+  let objStart = -1;
+
+  for (let i = 1; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '"') {
+      // Skip string contents
+      i++;
+      while (i < str.length && str[i] !== '"') {
+        if (str[i] === '\\') i++; // skip escaped chars
+        i++;
+      }
+      continue;
+    }
+    if (ch === '{') {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && objStart >= 0) {
+        try {
+          const obj = JSON.parse(str.substring(objStart, i + 1));
+          results.push(obj);
+        } catch (e) {
+          // skip malformed object
+        }
+        objStart = -1;
+      }
+    }
+  }
+
+  return results;
 }
 
 function sleep(ms) {
