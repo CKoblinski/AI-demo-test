@@ -3,15 +3,20 @@ import { findHighlights } from './find-highlights.js';
 import { generateWithRetry } from './generate-animation.js';
 import { exportAnimation } from './export-animation.js';
 import { findMatch, getAnimationHtml, listAnimations } from './library.js';
-import { buildPixelScene, buildMomentSequences } from './pixel-art-scene-builder.js';
-import { runDirectorPipeline } from './sequence-director.js';
-import { migrateFromCharactersJson, extractEntities } from './knowledge.js';
+import { buildPixelScene, buildMomentSequences, regenerateSingleSequence, reconstructPlayerData, readBackgroundFromDisk } from './pixel-art-scene-builder.js';
+import { runDirectorPipeline, rewriteSingleSequence } from './sequence-director.js';
+import { assembleSequencePlayerScene } from './assemble-scene.js';
+import { migrateFromCharactersJson, extractEntities, addBackground } from './knowledge.js';
 import { generateSessionSummary } from './session-summary.js';
 import { sanitizeStoryboardDescriptions } from './prompt-sanitizer.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, cpSync, readdirSync } from 'fs';
-import { join, resolve } from 'path';
+import { join, resolve, dirname } from 'path';
+import { exec } from 'child_process';
+import { fileURLToPath } from 'url';
 import archiver from 'archiver';
 import { createWriteStream } from 'fs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * In-process job runner for the pipeline.
@@ -36,7 +41,7 @@ const INTER_ANIMATION_DELAY_MS = 10000; // 10s between API calls (Tier 2 rate li
 /**
  * Create a new session from an uploaded VTT file.
  */
-export function createSession(vttPath, userContext = '') {
+export function createSession(vttPath, userContext = '', analysisModel = '') {
   const now = new Date();
   const dateStr = now.toISOString().replace(/T/, '_').replace(/:/g, '-').replace(/\..+/, '');
   // e.g. "2026-02-27_14-30-05"
@@ -50,6 +55,7 @@ export function createSession(vttPath, userContext = '') {
     stage: 'uploaded',
     vttPath: resolve(vttPath),
     userContext,
+    analysisModel: analysisModel || 'claude-opus-4-6',
     outDir: resolve(outDir),
     createdAt: new Date().toISOString(),
     error: null,
@@ -86,7 +92,18 @@ export function listSessions() {
     progress: s.progress,
     segmentCount: s.segments?.length || 0,
     hasSessionSummary: !!s.sessionSummary,
+    analysisModel: s.analysisModel || '',
+    momentTitle: s.highlights?.[s.selectedMoment]?.title || null,
+    totalCost: s.generation?.totalCost || null,
   }));
+}
+
+/**
+ * Delete session from in-memory map.
+ * Files on disk are preserved for manual recovery.
+ */
+export function deleteSession(id) {
+  sessions.delete(id);
 }
 
 /**
@@ -140,7 +157,7 @@ export async function runAnalysis(sessionId) {
     // Session summary analyzes the DM's recap (~50 cues) — fast and cheap
     // This adds zero wall-clock time since both run concurrently
     const [highlights, sessionSummary] = await Promise.all([
-      findHighlights(parsed, { userContext: session.userContext }),
+      findHighlights(parsed, { userContext: session.userContext, model: session.analysisModel }),
       generateSessionSummary(parsed, { campaignIds: session.campaignIds }).catch(err => {
         // Non-fatal — log and continue without summary
         console.warn(`Session summary failed (non-fatal): ${err.message}`);
@@ -635,6 +652,16 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
         },
       });
 
+      // Stash sequence directory paths for rerun support (small strings, safe for state.json)
+      session.generation._seqDirs = result.sequences.map(sr => sr.dir || null);
+
+      // Auto-index backgrounds in knowledge base
+      try {
+        indexGeneratedBackgrounds(session, result);
+      } catch (bgErr) {
+        console.warn(`  Background indexing failed (non-fatal): ${bgErr.message}`);
+      }
+
       // Final state — track QA failures
       const passedSeqs = result.sequences.filter(s => !s._qaFailed).length;
       const failedSeqs = result.sequences.filter(s => s._qaFailed).length;
@@ -759,6 +786,306 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
     session.stage = 'failed';
     session.error = err.message;
     session.progress = { message: `Generation failed: ${err.message}`, percent: 0 };
+    saveState(session);
+    throw err;
+  }
+}
+
+/**
+ * Rerun a single sequence from a completed moment.
+ * Supports two modes:
+ *   - 'rewrite': Director AI rewrites the sequence descriptions, then regenerates assets
+ *   - 'reattempt': Same descriptions, fresh Gemini generation
+ *
+ * @param {string} sessionId
+ * @param {number} sequenceIndex - 0-based
+ * @param {string} mode - 'rewrite' or 'reattempt'
+ * @param {string} instructions - User feedback text
+ */
+export async function rerunSequence(sessionId, sequenceIndex, mode, instructions = '') {
+  const session = sessions.get(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  if (!session.storyboard?.plan?.sequences) throw new Error('No storyboard available');
+
+  const sequences = session.storyboard.plan.sequences;
+  if (sequenceIndex < 0 || sequenceIndex >= sequences.length) {
+    throw new Error(`Invalid sequence index: ${sequenceIndex} (have ${sequences.length} sequences)`);
+  }
+
+  const moment = session.highlights?.[session.selectedMoment];
+  if (!moment) throw new Error('No selected moment');
+
+  // Set rerun state
+  session.stage = 'rerunning_sequence';
+  session.cancelled = false;
+  session.rerun = {
+    sequenceIndex,
+    mode,
+    instructions,
+    status: 'starting',
+    error: null,
+  };
+  session.progress = { message: `Rerunning sequence ${sequenceIndex + 1}...`, percent: 10 };
+  saveState(session);
+
+  // Locate the moment output directory
+  const sceneDir = join(session.outDir, `moment_${String((session.selectedMoment || 0) + 1).padStart(2, '0')}_${slugify(moment.title)}`);
+
+  // Locate sequence directories — prefer _seqDirs from state, fall back to scanning
+  let seqDirs = session.generation?._seqDirs;
+  if (!seqDirs || seqDirs.length === 0) {
+    // Scan for seq_NN_* directories
+    const entries = readdirSync(sceneDir, { withFileTypes: true });
+    const seqEntries = entries.filter(e => e.isDirectory() && /^seq_\d+_/.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
+    seqDirs = seqEntries.map(e => join(sceneDir, e.name));
+    session.generation._seqDirs = seqDirs;
+  }
+
+  const seqDir = seqDirs[sequenceIndex];
+  if (!seqDir || !existsSync(seqDir)) {
+    throw new Error(`Sequence directory not found for index ${sequenceIndex}`);
+  }
+
+  try {
+    // ── Step 1: Rewrite sequence if requested ──
+    if (mode === 'rewrite' && instructions) {
+      session.rerun.status = 'rewriting';
+      session.progress = { message: `Rewriting sequence ${sequenceIndex + 1} descriptions...`, percent: 20 };
+      saveState(session);
+
+      const rewritten = await rewriteSingleSequence({
+        storyboard: session.storyboard.plan,
+        sequenceIndex,
+        instructions,
+        moment,
+        cues: session.parsedSession?.cues || [],
+        sceneContext: session.sceneContext || session.storyboard?.sceneContext || null,
+        sessionSummary: session.sessionSummary || null,
+      });
+
+      // Update storyboard with rewritten sequence
+      session.storyboard.plan.sequences[sequenceIndex] = rewritten;
+
+      // Recalculate startOffsetSec for all sequences after the rewritten one
+      let offset = 0;
+      for (const seq of session.storyboard.plan.sequences) {
+        seq.startOffsetSec = offset;
+        offset += seq.durationSec || 0;
+      }
+      session.storyboard.plan.totalDurationSec = offset;
+
+      saveState(session);
+      console.log(`  Sequence ${sequenceIndex + 1} rewritten by Director AI`);
+    } else if (mode === 'reattempt' && instructions) {
+      // Append instructions as visualNotes addendum
+      const seq = sequences[sequenceIndex];
+      const note = `\n[USER FEEDBACK]: ${instructions}`;
+      seq.visualNotes = (seq.visualNotes || '') + note;
+      saveState(session);
+    }
+
+    // ── Step 2: Resolve background references from disk ──
+    session.rerun.status = 'generating';
+    session.progress = { message: `Regenerating sequence ${sequenceIndex + 1} assets...`, percent: 35 };
+    saveState(session);
+
+    const seq = sequences[sequenceIndex];
+
+    // Resolve reuseBackgroundFrom from disk
+    let reusedBg = null;
+    if (seq.reuseBackgroundFrom) {
+      const refIdx = seq.reuseBackgroundFrom - 1;
+      if (refIdx >= 0 && refIdx < seqDirs.length && seqDirs[refIdx]) {
+        const bgData = readBackgroundFromDisk(seqDirs[refIdx]);
+        if (bgData) {
+          reusedBg = { base64: bgData.base64, mimeType: bgData.mimeType };
+          console.log(`  Reusing background from sequence ${seq.reuseBackgroundFrom} (disk)`);
+        }
+      }
+    }
+
+    // Resolve styleRef from previous sequence's background
+    let styleRef = null;
+    if (sequenceIndex > 0 && seqDirs[sequenceIndex - 1]) {
+      const prevBg = readBackgroundFromDisk(seqDirs[sequenceIndex - 1]);
+      if (prevBg) {
+        styleRef = { base64: prevBg.base64, mimeType: prevBg.mimeType };
+      }
+    }
+
+    // ── Step 3: Regenerate assets ──
+    const seqResult = await regenerateSingleSequence({
+      seq,
+      sequenceIndex,
+      seqDir,
+      direction: session.direction || '',
+      sceneContext: session.sceneContext || session.storyboard?.sceneContext || null,
+      reusedBg,
+      styleRef,
+      checkCancelled: () => session.cancelled === true,
+      onProgress: (step, data) => {
+        if (step === 'sequence' && data.status === 'generating') {
+          session.progress = { message: `Generating ${seq.type} assets...`, percent: 45 };
+        } else if (step === 'asset') {
+          session.progress = { message: `Generating ${data.asset}...`, percent: 50 };
+        }
+        saveState(session);
+      },
+    });
+
+    if (session.cancelled) throw new Error('Rerun cancelled');
+
+    // Update session generation data for this sequence
+    if (session.generation?.sequences?.[sequenceIndex]) {
+      session.generation.sequences[sequenceIndex].status = seqResult._qaFailed ? 'qa_failed' : 'complete';
+      session.generation.sequences[sequenceIndex].cost = seqResult.cost || 0;
+    }
+
+    // ── Step 4: Reassemble master HTML ──
+    session.rerun.status = 'assembling';
+    session.progress = { message: 'Rebuilding sequence player...', percent: 70 };
+    saveState(session);
+
+    // Reconstruct playerData for ALL sequences from disk
+    const playerSequences = [];
+    for (let i = 0; i < sequences.length; i++) {
+      if (i === sequenceIndex) {
+        // Use the fresh seqResult's playerData
+        if (seqResult.playerData && !seqResult._qaFailed) {
+          playerSequences.push(seqResult.playerData);
+        }
+      } else {
+        // Reconstruct from disk
+        const dir = seqDirs[i];
+        if (dir && existsSync(dir)) {
+          const pd = reconstructPlayerData(dir, sequences[i]);
+          if (pd) playerSequences.push(pd);
+        }
+      }
+    }
+
+    if (playerSequences.length > 0) {
+      const totalDurationMs = sequences.reduce((sum, s) => sum + (s.durationSec * 1000), 0);
+      const sceneTitle = moment.title || 'D&D Shorts';
+
+      const playerHtml = assembleSequencePlayerScene({
+        sequences: playerSequences,
+        totalDurationMs,
+        sceneTitle,
+      });
+
+      const playerPath = join(sceneDir, 'sequence-player.html');
+      writeFileSync(playerPath, playerHtml);
+
+      if (session.generation?.export?.files) {
+        session.generation.export.files.playerHtml = playerPath;
+      }
+
+      console.log(`  Master sequence-player.html rebuilt (${Math.round(playerHtml.length / 1024)}KB)`);
+    }
+
+    // ── Step 5: Re-export sequence MP4 ──
+    session.rerun.status = 'exporting';
+    session.progress = { message: 'Exporting video...', percent: 80 };
+    saveState(session);
+
+    if (seqResult.html && !seqResult._qaFailed) {
+      const captureBin = join(__dirname, '..', 'bin', 'capture-scene.js');
+      const seqDurationSec = Math.ceil(seq.durationSec) + 1;
+
+      try {
+        await new Promise((resolve, reject) => {
+          exec(
+            `node "${captureBin}" "${seqResult.html}" --duration=${seqDurationSec} --fps=12 --width=1080 --height=1920 --no-gif`,
+            { timeout: 120000 },
+            (err, stdout, stderr) => {
+              if (err) {
+                console.error(`  Export stderr (rerun seq ${sequenceIndex + 1}):`, stderr);
+                reject(err);
+              } else {
+                resolve(stdout);
+              }
+            }
+          );
+        });
+
+        const seqMp4 = seqResult.html.replace('.html', '.mp4');
+        if (existsSync(seqMp4)) {
+          console.log(`  Re-exported: ${seqMp4}`);
+
+          // Update sequenceFiles in session
+          if (session.generation?.export?.sequenceFiles?.[sequenceIndex]) {
+            session.generation.export.sequenceFiles[sequenceIndex].mp4 = seqMp4;
+            session.generation.export.sequenceFiles[sequenceIndex].html = seqResult.html;
+          }
+        }
+      } catch (err) {
+        console.error(`  Re-export failed: ${err.message}`);
+      }
+    }
+
+    // ── Step 6: Re-concatenate master MP4 ──
+    session.progress = { message: 'Concatenating master video...', percent: 90 };
+    saveState(session);
+
+    const allMp4s = [];
+    for (let i = 0; i < sequences.length; i++) {
+      const dir = seqDirs[i];
+      if (dir) {
+        const mp4Path = join(dir, 'scene.mp4');
+        if (existsSync(mp4Path)) allMp4s.push(mp4Path);
+      }
+    }
+
+    if (allMp4s.length >= 2) {
+      const concatListPath = join(sceneDir, 'concat-list.txt');
+      const concatContent = allMp4s.map(f => `file '${f}'`).join('\n');
+      writeFileSync(concatListPath, concatContent);
+
+      const masterMp4Path = join(sceneDir, 'scene.mp4');
+      try {
+        await new Promise((resolve, reject) => {
+          exec(
+            `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c copy "${masterMp4Path}"`,
+            { timeout: 60000 },
+            (err, stdout, stderr) => {
+              if (err) reject(err);
+              else resolve(stdout);
+            }
+          );
+        });
+        console.log(`  Master MP4 re-concatenated: ${masterMp4Path}`);
+      } catch (err) {
+        console.error(`  Master MP4 concat error: ${err.message}`);
+      }
+    } else if (allMp4s.length === 1) {
+      console.log(`  Single sequence — no concat needed`);
+    }
+
+    // ── Step 7: Finalize ──
+    session.stage = 'complete';
+    session.rerun.status = 'complete';
+    session.progress = { message: 'Sequence rerun complete!', percent: 100 };
+    // Recalculate total cost
+    if (session.generation?.sequences) {
+      session.generation.totalCost = session.generation.sequences.reduce((s, sq) => s + (sq.cost || 0), 0);
+    }
+    saveState(session);
+
+    console.log(`  Rerun complete for session ${sessionId}, sequence ${sequenceIndex + 1}`);
+
+  } catch (err) {
+    if (session.cancelled) {
+      session.stage = 'complete'; // Return to complete state so user can try again
+      session.rerun.status = 'cancelled';
+      session.progress = { message: 'Rerun cancelled', percent: 0 };
+      saveState(session);
+      return;
+    }
+    console.error(`  Rerun failed: ${err.message}`);
+    session.stage = 'complete'; // Return to complete state so user can retry
+    session.rerun = { ...session.rerun, status: 'failed', error: err.message };
+    session.progress = { message: `Rerun failed: ${err.message}`, percent: 0 };
     saveState(session);
     throw err;
   }
@@ -945,6 +1272,81 @@ export function updateStoryboard(sessionId, editedPlan) {
 
   saveState(session);
   return session;
+}
+
+// ── Background Indexing ──
+
+/**
+ * Index generated backgrounds in the knowledge base after generation.
+ * Scans sequence directories for background.png files and indexes them
+ * with location/mood tags from the storyboard.
+ */
+function indexGeneratedBackgrounds(session, result) {
+  const storyboard = session.storyboard?.plan;
+  if (!storyboard?.sequences) return;
+
+  const seqDirs = result.sequences.map(sr => sr.dir || null);
+  let indexed = 0;
+
+  for (let i = 0; i < storyboard.sequences.length; i++) {
+    const seq = storyboard.sequences[i];
+    const seqDir = seqDirs[i];
+    if (!seqDir) continue;
+
+    // Skip sequences that reuse backgrounds from another sequence
+    if (seq.reuseBackgroundFrom != null) continue;
+
+    // Only index types that have backgrounds
+    const bgTypes = ['dialogue', 'dm_description', 'establishing_shot', 'reaction'];
+    if (!bgTypes.includes(seq.type)) continue;
+
+    const bgPath = join(seqDir, 'assets', 'background.png');
+    if (!existsSync(bgPath)) continue;
+
+    // Derive location tag from background description or mood
+    const desc = seq.backgroundDescription || '';
+    const locationTag = deriveLocationTag(desc);
+
+    addBackground({
+      imagePath: bgPath,
+      mood: seq.backgroundMood || 'neutral',
+      description: desc,
+      sessionId: session.id,
+      locationTag,
+    });
+    indexed++;
+  }
+
+  if (indexed > 0) {
+    console.log(`  Knowledge: Indexed ${indexed} backgrounds`);
+  }
+}
+
+/**
+ * Derive a simple location tag from a background description.
+ * Uses keyword matching for common D&D locations.
+ */
+function deriveLocationTag(description) {
+  const desc = description.toLowerCase();
+  const tags = [
+    ['tavern', /tavern|inn|bar|pub|ale/],
+    ['dungeon', /dungeon|underground|cavern|cave|tunnel/],
+    ['forest', /forest|woods|trees|grove|glade/],
+    ['camp', /camp|campfire|tent|bonfire/],
+    ['castle', /castle|fortress|keep|throne/],
+    ['temple', /temple|shrine|altar|chapel|church/],
+    ['battlefield', /battlefield|arena|combat|fighting/],
+    ['astral', /astral|void|cosmos|ethereal|plane/],
+    ['ocean', /ocean|sea|ship|dock|port|harbor/],
+    ['mountain', /mountain|cliff|peak|summit/],
+    ['city', /city|town|street|market|village/],
+    ['library', /library|study|books|archive/],
+  ];
+
+  for (const [tag, regex] of tags) {
+    if (regex.test(desc)) return tag;
+  }
+  return 'unknown';
 }
 
 // ── Helpers ──

@@ -4,13 +4,14 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
-  createSession, getSession, listSessions,
+  createSession, getSession, listSessions, deleteSession,
   runAnalysis, runGeneration, runDirector, runPixelGeneration,
   cancelGeneration, regenerateAnimation, createSessionZip,
-  updateStoryboard,
+  updateStoryboard, rerunSequence,
 } from './src/job-runner.js';
 import { listAnimations, getAnimationHtml } from './src/library.js';
 import { loadCampaignContext } from './src/session-summary.js';
+import { loadKnowledge, saveKnowledge } from './src/knowledge.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -50,6 +51,9 @@ app.use('/output', express.static(join(__dirname, 'output')));
 // Serve library files (for previews)
 app.use('/library', express.static(join(__dirname, 'library')));
 
+// Serve data files (portraits, tokens, etc.)
+app.use('/data', express.static(join(__dirname, 'data')));
+
 // ═══════════════════════════════════════
 // API Routes
 // ═══════════════════════════════════════
@@ -68,7 +72,8 @@ app.post('/api/sessions', (req, res) => {
       }
 
       const userContext = req.body.context || '';
-      const session = createSession(req.file.path, userContext);
+      const analysisModel = req.body.analysisModel || '';
+      const session = createSession(req.file.path, userContext, analysisModel);
 
       // Start analysis in background
       runAnalysis(session.id).catch(err => {
@@ -123,6 +128,11 @@ app.get('/api/sessions/:id', (req, res) => {
   // Include pixel art generation progress
   if (session.generation) {
     response.generation = session.generation;
+  }
+
+  // Include rerun state
+  if (session.rerun) {
+    response.rerun = session.rerun;
   }
 
   // Include parsed session data (for transcript display)
@@ -295,6 +305,38 @@ app.post('/api/sessions/:id/cancel', (req, res) => {
   }
 });
 
+// Rerun a single sequence from a completed moment
+app.post('/api/sessions/:id/sequences/:seqIndex/rerun', async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  if (session.stage === 'rerunning_sequence') {
+    return res.status(400).json({ error: 'A rerun is already in progress' });
+  }
+  if (session.stage !== 'complete') {
+    return res.status(400).json({ error: `Cannot rerun in stage: ${session.stage}. Must be complete.` });
+  }
+
+  const seqIndex = parseInt(req.params.seqIndex);
+  const { mode, instructions } = req.body;
+
+  if (!mode || !['rewrite', 'reattempt'].includes(mode)) {
+    return res.status(400).json({ error: 'mode must be "rewrite" or "reattempt"' });
+  }
+
+  const seqCount = session.storyboard?.plan?.sequences?.length || 0;
+  if (isNaN(seqIndex) || seqIndex < 0 || seqIndex >= seqCount) {
+    return res.status(400).json({ error: `Invalid seqIndex: ${seqIndex} (have ${seqCount} sequences)` });
+  }
+
+  res.json({ message: `Rerunning sequence ${seqIndex + 1}...`, stage: 'rerunning_sequence' });
+
+  // Run async — don't block the response
+  rerunSequence(session.id, seqIndex, mode, instructions || '').catch(err => {
+    console.error(`Rerun error for session ${session.id}:`, err);
+  });
+});
+
 // Reject a specific animation within a clip and regenerate
 app.post('/api/sessions/:id/segments/:segIndex/animations/:animIndex/reject', async (req, res) => {
   const session = getSession(req.params.id);
@@ -380,6 +422,89 @@ app.get('/api/library/:id/preview', (req, res) => {
   const htmlPath = join(__dirname, 'library', req.params.id, 'animation.html');
   if (!existsSync(htmlPath)) return res.status(404).json({ error: 'Library animation not found' });
   res.sendFile(htmlPath);
+});
+
+// ─── Knowledge Base API ───
+
+// Get full knowledge base
+app.get('/api/knowledge', (req, res) => {
+  try {
+    const kb = loadKnowledge();
+    res.json(kb);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update portrait rating
+app.patch('/api/knowledge/portraits/:id', (req, res) => {
+  try {
+    const kb = loadKnowledge();
+    const portrait = kb.portraits.find(p => p.id === req.params.id);
+    if (!portrait) return res.status(404).json({ error: 'Portrait not found' });
+
+    const { rating } = req.body;
+    if (rating !== null && rating !== 'good' && rating !== 'bad') {
+      return res.status(400).json({ error: 'Rating must be "good", "bad", or null' });
+    }
+
+    portrait.rating = rating;
+    saveKnowledge(kb);
+    res.json({ id: portrait.id, rating: portrait.rating });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update background rating
+app.patch('/api/knowledge/backgrounds/:id', (req, res) => {
+  try {
+    const kb = loadKnowledge();
+    const bg = kb.backgrounds.find(b => b.id === req.params.id);
+    if (!bg) return res.status(404).json({ error: 'Background not found' });
+
+    const { rating } = req.body;
+    if (rating !== null && rating !== 'good' && rating !== 'bad') {
+      return res.status(400).json({ error: 'Rating must be "good", "bad", or null' });
+    }
+
+    bg.rating = rating;
+    saveKnowledge(kb);
+    res.json({ id: bg.id, rating: bg.rating });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update character/entity fields
+app.patch('/api/knowledge/characters/:id', (req, res) => {
+  try {
+    const kb = loadKnowledge();
+    let entity = kb.characters.find(c => c.id === req.params.id);
+    if (!entity) entity = kb.npcs.find(n => n.id === req.params.id);
+    if (!entity) return res.status(404).json({ error: 'Entity not found' });
+
+    const allowed = ['visualDescription', 'conditionalFeatures', 'tags', 'color', 'race', 'class'];
+    for (const [key, value] of Object.entries(req.body)) {
+      if (allowed.includes(key)) {
+        entity[key] = value;
+      }
+    }
+
+    saveKnowledge(kb);
+    res.json(entity);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Hide session (remove from in-memory list, files preserved on disk)
+app.delete('/api/sessions/:id', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  deleteSession(req.params.id);
+  res.json({ message: 'Session hidden' });
 });
 
 // ═══════════════════════════════════════

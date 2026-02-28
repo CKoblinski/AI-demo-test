@@ -594,6 +594,173 @@ export async function creativeQC(plan, sceneContext, characterCards) {
 }
 
 /**
+ * Rewrite a single sequence from an existing storyboard based on user feedback.
+ * Uses the focused sequence-rewrite prompt instead of the full Director prompt.
+ *
+ * @param {object} params
+ * @param {object} params.storyboard - Full storyboard (plan) for context
+ * @param {number} params.sequenceIndex - 0-based index into storyboard.sequences
+ * @param {string} params.instructions - User feedback text
+ * @param {object} params.moment - Highlight object
+ * @param {object[]} params.cues - Transcript cues
+ * @param {object} [params.sceneContext] - Scene context brief
+ * @param {object} [params.sessionSummary] - Session summary card
+ * @returns {Promise<object>} Updated sequence object (same shape as storyboard.sequences[i])
+ */
+export async function rewriteSingleSequence({ storyboard, sequenceIndex, instructions, moment, cues, sceneContext, sessionSummary }) {
+  const client = new Anthropic();
+
+  // Load the focused rewrite prompt
+  const promptPath = join(__dirname, '..', 'prompts', 'sequence-rewrite.md');
+  const systemPrompt = readFileSync(promptPath, 'utf-8');
+
+  const targetSeq = storyboard.sequences[sequenceIndex];
+  if (!targetSeq) {
+    throw new Error(`Invalid sequence index ${sequenceIndex} — storyboard has ${storyboard.sequences.length} sequences`);
+  }
+
+  // Build context message
+  const parts = [];
+
+  // Full storyboard for context
+  parts.push('## Full Storyboard (all sequences — for context)');
+  parts.push('```json');
+  parts.push(JSON.stringify(storyboard, null, 2));
+  parts.push('```');
+
+  // Target sequence
+  parts.push(`\n## Target Sequence to Rewrite`);
+  parts.push(`**Sequence ${targetSeq.order}** (0-based index: ${sequenceIndex})`);
+  parts.push('```json');
+  parts.push(JSON.stringify(targetSeq, null, 2));
+  parts.push('```');
+
+  // User feedback
+  parts.push(`\n## User Feedback`);
+  parts.push(instructions);
+
+  // Character cards from knowledge base
+  let characters = [];
+  try {
+    const kb = loadKnowledge();
+    characters = kb.characters || [];
+  } catch (e) {
+    const charactersPath = join(__dirname, '..', 'data', 'characters.json');
+    if (existsSync(charactersPath)) {
+      try {
+        characters = JSON.parse(readFileSync(charactersPath, 'utf-8')).characters || [];
+      } catch (e2) { /* ignore */ }
+    }
+  }
+
+  if (characters.length > 0) {
+    parts.push(`\n## Character Reference`);
+    for (const ch of characters) {
+      parts.push(`\n### ${ch.name} (${ch.race}, ${ch.class}) [border color: ${ch.color}]`);
+      parts.push(`**Visual:** ${ch.visualDescription}`);
+      if (ch.deity) parts.push(`**Deity:** ${ch.deity}`);
+      if (ch.conditionalFeatures && Object.keys(ch.conditionalFeatures).length > 0) {
+        const features = Object.entries(ch.conditionalFeatures)
+          .map(([f, c]) => `${f}: ${c}`).join('; ');
+        parts.push(`**Conditional Features:** ${features}`);
+      }
+      if (ch.signatureItems && ch.signatureItems.length > 0) {
+        parts.push(`**Signature Items:** ${ch.signatureItems
+          .map(i => `${i.name} (${i.type}) — ${i.visualDescription}`).join('; ')}`);
+      }
+      if (ch.keyAbilities && ch.keyAbilities.length > 0) {
+        parts.push(`**Key Abilities:** ${ch.keyAbilities.join('; ')}`);
+      }
+    }
+  }
+
+  // Scene context
+  if (sceneContext) {
+    parts.push(`\n## Scene Context`);
+    if (sceneContext.setting) parts.push(`**Setting:** ${sceneContext.setting}`);
+    if (sceneContext.conflict) parts.push(`**Conflict:** ${sceneContext.conflict}`);
+    if (sceneContext.spatialPositioning) parts.push(`**Positioning:** ${sceneContext.spatialPositioning}`);
+  }
+
+  // Session summary — proper nouns
+  if (sessionSummary?.properNounTranslations && Object.keys(sessionSummary.properNounTranslations).length > 0) {
+    parts.push(`\n## Proper Noun Visual References`);
+    for (const [noun, desc] of Object.entries(sessionSummary.properNounTranslations)) {
+      parts.push(`- **${noun}**: ${desc}`);
+    }
+  }
+
+  // Relevant transcript cues
+  if (cues && cues.length > 0 && moment.startTime !== undefined) {
+    const bufferSec = 15;
+    const nearbyCues = cues.filter(c =>
+      c.start >= (moment.startTime - bufferSec) && c.start <= (moment.endTime + bufferSec)
+    ).slice(0, 80);
+
+    if (nearbyCues.length > 0) {
+      parts.push(`\n## Transcript Context`);
+      let insideMoment = false;
+      for (const c of nearbyCues) {
+        const inMoment = c.start >= moment.startTime && c.start <= moment.endTime;
+        if (inMoment && !insideMoment) {
+          parts.push('── MOMENT START ──');
+          insideMoment = true;
+        } else if (!inMoment && insideMoment) {
+          parts.push('── MOMENT END ──');
+          insideMoment = false;
+        }
+        const ts = formatTime(c.start);
+        const speaker = c.speaker ? `${c.speaker}: ` : '';
+        parts.push(`[${c.id}] ${ts} ${speaker}${c.text}`);
+      }
+      if (insideMoment) parts.push('── MOMENT END ──');
+    }
+  }
+
+  const userMessage = parts.join('\n');
+
+  console.log(`  Sequence Rewriter: Rewriting sequence ${targetSeq.order} (${targetSeq.type})...`);
+  const startTime = Date.now();
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 2000,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  });
+
+  const durationMs = Date.now() - startTime;
+  console.log(`  Sequence Rewriter: Done (${durationMs}ms)`);
+
+  const text = response.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('');
+
+  const rewritten = parseJSON(text);
+  if (!rewritten) {
+    throw new Error(`Sequence Rewriter returned invalid JSON: ${text.substring(0, 200)}`);
+  }
+
+  // Ensure order is preserved
+  rewritten.order = targetSeq.order;
+
+  // Validate required fields based on type
+  if ((rewritten.type === 'dialogue' || rewritten.type === 'dm_description') && !rewritten.dialogueLines) {
+    throw new Error('Rewritten dialogue/dm_description sequence missing dialogueLines');
+  }
+  if ((rewritten.type === 'close_up' || rewritten.type === 'action_closeup') && !rewritten.actionDescription) {
+    throw new Error('Rewritten close_up sequence missing actionDescription');
+  }
+  if (rewritten.type === 'impact' && !rewritten.effectName) {
+    throw new Error('Rewritten impact sequence missing effectName');
+  }
+
+  console.log(`  Sequence Rewriter: Rewritten seq ${rewritten.order} (${rewritten.type}), ${rewritten.durationSec}s`);
+  return rewritten;
+}
+
+/**
  * Run the full Director pipeline:
  *   scene context → plan → technical QC → creative QC → retry if needed
  *

@@ -24,7 +24,7 @@ const PORTRAITS_DIR = join(__dirname, '..', 'data', 'portraits');
  */
 export function loadKnowledge() {
   if (!existsSync(KNOWLEDGE_PATH)) {
-    const fresh = { version: 1, characters: [], npcs: [], locations: [], portraits: [] };
+    const fresh = { version: 1, characters: [], npcs: [], locations: [], portraits: [], backgrounds: [] };
     saveKnowledge(fresh);
     return fresh;
   }
@@ -38,11 +38,12 @@ export function loadKnowledge() {
     kb.npcs = kb.npcs || [];
     kb.locations = kb.locations || [];
     kb.portraits = kb.portraits || [];
+    kb.backgrounds = kb.backgrounds || [];
 
     return kb;
   } catch (err) {
     console.error(`Knowledge base read error: ${err.message}, creating fresh`);
-    const fresh = { version: 1, characters: [], npcs: [], locations: [], portraits: [] };
+    const fresh = { version: 1, characters: [], npcs: [], locations: [], portraits: [], backgrounds: [] };
     saveKnowledge(fresh);
     return fresh;
   }
@@ -266,7 +267,8 @@ export function addPortrait(entityId, portraitData) {
 export function findBestPortrait(entityId, mood) {
   const kb = loadKnowledge();
 
-  let candidates = kb.portraits.filter(p => p.entityId === entityId);
+  // Filter out portraits rated "bad" by the user
+  let candidates = kb.portraits.filter(p => p.entityId === entityId && p.rating !== 'bad');
 
   if (mood) {
     // Prefer exact mood match, but fall back to any portrait
@@ -300,6 +302,64 @@ export function findBestPortrait(entityId, mood) {
 
   console.warn(`  Knowledge: Portrait file missing: ${best.imagePath}`);
   return null;
+}
+
+/**
+ * Index a generated background in the knowledge base.
+ * Stores metadata only — the actual PNG stays in the session output directory.
+ *
+ * @param {object} bgData - { imagePath, mood, description, sessionId, locationTag? }
+ * @returns {object} The background record
+ */
+export function addBackground(bgData) {
+  const kb = loadKnowledge();
+
+  const timestamp = Date.now().toString(36);
+  const mood = bgData.mood || 'neutral';
+  const tag = bgData.locationTag || 'unknown';
+
+  const record = {
+    id: `bg_${tag}_${mood}_${timestamp}`,
+    locationTag: tag,
+    mood,
+    description: bgData.description || '',
+    imagePath: bgData.imagePath,
+    sessionId: bgData.sessionId || null,
+    quality: 1,
+    createdAt: new Date().toISOString(),
+  };
+
+  kb.backgrounds.push(record);
+  saveKnowledge(kb);
+
+  return record;
+}
+
+/**
+ * Find backgrounds matching a location tag and/or mood.
+ *
+ * @param {string} [locationTag] - Location tag to match
+ * @param {string} [mood] - Mood to match
+ * @returns {object[]} Matching background records (newest first)
+ */
+export function findBackgrounds(locationTag, mood) {
+  const kb = loadKnowledge();
+
+  let candidates = kb.backgrounds.filter(b => b.rating !== 'bad');
+
+  if (locationTag) {
+    const tagMatch = candidates.filter(b => b.locationTag === locationTag);
+    if (tagMatch.length > 0) candidates = tagMatch;
+  }
+
+  if (mood) {
+    const moodMatch = candidates.filter(b => b.mood === mood);
+    if (moodMatch.length > 0) candidates = moodMatch;
+  }
+
+  // Newest first
+  candidates.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return candidates;
 }
 
 /**

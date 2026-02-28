@@ -12,7 +12,17 @@
     <p class="subtitle">Drop a Zoom transcript, get pixel art dialogue scenes</p>
   </header>
 
+  <!-- Tab Navigation -->
+  <nav id="tab-bar" class="tab-bar">
+    <button class="tab-btn active" data-tab="factory">Factory</button>
+    <button class="tab-btn" data-tab="sessions">Sessions</button>
+    <button class="tab-btn" data-tab="cards">Cards</button>
+  </nav>
+
   <main id="app">
+    <!-- Tab 1: Factory (wraps ALL existing screens) -->
+    <div id="tab-factory" class="tab-panel active">
+
     <!-- Screen 1: Upload -->
     <section id="screen-upload" class="screen active">
       <div class="upload-card">
@@ -26,6 +36,17 @@
         <div class="context-box">
           <label for="user-context">What was important this episode? <span class="optional">(optional)</span></label>
           <textarea id="user-context" rows="3" placeholder="e.g., Bixie found the corruption ledger, there was a big fight with Vexus, Lex rolled a nat 20 on perception..."></textarea>
+        </div>
+
+        <div class="model-toggle">
+          <label class="model-option">
+            <input type="radio" name="analysis-model" value="claude-opus-4-6" checked>
+            <div><strong>Opus 4.6</strong> <span class="model-cost">~$1.20, best quality</span></div>
+          </label>
+          <label class="model-option">
+            <input type="radio" name="analysis-model" value="claude-haiku-4-5-20251001">
+            <div><strong>Haiku</strong> <span class="model-cost">~$0.25, faster</span></div>
+          </label>
         </div>
 
         <button id="submit-btn" class="btn-primary" disabled>Analyze Transcript</button>
@@ -165,6 +186,63 @@
         <button id="new-session-btn" class="btn-secondary">New Session</button>
       </div>
     </section>
+
+    <!-- Rerun Modal -->
+    <div id="rerun-modal" class="modal" style="display: none">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h3>Rerun Sequence <span id="rerun-seq-num"></span></h3>
+        <p class="modal-desc" id="rerun-seq-desc"></p>
+
+        <div class="rerun-modes">
+          <label class="rerun-mode-option">
+            <input type="radio" name="rerun-mode" value="reattempt" checked>
+            <div>
+              <strong>Re-attempt Gemini output</strong>
+              <span>Same descriptions, new images (~$0.04-0.16)</span>
+            </div>
+          </label>
+          <label class="rerun-mode-option">
+            <input type="radio" name="rerun-mode" value="rewrite">
+            <div>
+              <strong>Rewrite sequence</strong>
+              <span>Director AI rewrites descriptions + regenerates (~$0.05-0.18)</span>
+            </div>
+          </label>
+        </div>
+
+        <label for="rerun-instructions-text">Extra instructions <span class="optional">(optional)</span></label>
+        <textarea id="rerun-instructions-text" rows="3"
+          placeholder="e.g., Use the Blooming Blade instead of the ring / Make the background darker"></textarea>
+
+        <div class="modal-actions">
+          <button id="rerun-submit-btn" class="btn-primary">Rerun Sequence</button>
+          <button id="rerun-cancel-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    </div><!-- /tab-factory -->
+
+    <!-- Tab 2: Sessions -->
+    <div id="tab-sessions" class="tab-panel">
+      <h2>All Sessions</h2>
+      <p class="tab-intro">Browse and manage all previous pipeline runs.</p>
+      <div id="all-sessions-list" class="all-sessions-list"></div>
+    </div>
+
+    <!-- Tab 3: Cards (Knowledge Base) -->
+    <div id="tab-cards" class="tab-panel">
+      <div class="cards-nav">
+        <button class="cards-nav-btn active" data-section="characters">Characters</button>
+        <button class="cards-nav-btn" data-section="npcs">NPCs &amp; Creatures</button>
+        <button class="cards-nav-btn" data-section="locations">Locations</button>
+        <button class="cards-nav-btn" data-section="portraits">Portrait Gallery</button>
+        <button class="cards-nav-btn" data-section="backgrounds">Backgrounds</button>
+      </div>
+      <div id="cards-content" class="cards-content"></div>
+    </div>
+
   </main>
 
   <script src="app.js"></script>

@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
@@ -429,6 +429,334 @@ function slugify(text) {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_|_$/g, '')
     .substring(0, 30);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Sequence Reconstruction (for rerun support)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Reconstruct playerData for a sequence by reading PNG assets from disk.
+ * Used to rebuild sequence-player.html after rerunning a single sequence,
+ * without needing the original in-memory data.
+ *
+ * @param {string} seqDir - Path to the sequence directory (e.g., .../seq_01_dialogue_hodim)
+ * @param {object} seq - Storyboard sequence definition (from storyboard.plan.sequences[i])
+ * @returns {object|null} playerData object suitable for assembleSequencePlayerScene, or null if assets missing
+ */
+export function reconstructPlayerData(seqDir, seq) {
+  const assetsDir = join(seqDir, 'assets');
+  if (!existsSync(assetsDir) && seq.type !== 'impact') return null;
+
+  function readPngAsDataUri(filePath) {
+    if (!existsSync(filePath)) return null;
+    const buffer = readFileSync(filePath);
+    const base64 = buffer.toString('base64');
+    return `data:image/png;base64,${base64}`;
+  }
+
+  function readPngAsRaw(filePath) {
+    if (!existsSync(filePath)) return null;
+    const buffer = readFileSync(filePath);
+    return { base64: buffer.toString('base64'), mimeType: 'image/png', buffer };
+  }
+
+  const dialogueLines = (seq.dialogueLines || []).map(line => ({
+    text: line.text,
+    speed: Math.round(BASE_MS_PER_CHAR * READING_SPEED_MULTIPLIER),
+  }));
+  if (dialogueLines.length === 0 && (seq.type === 'dialogue' || seq.type === 'dm_description' || seq.type === 'reaction')) {
+    dialogueLines.push({ text: '...', speed: Math.round(BASE_MS_PER_CHAR * READING_SPEED_MULTIPLIER) });
+  }
+
+  switch (seq.type) {
+    case 'dialogue':
+    case 'reaction': {
+      const bgUri = readPngAsDataUri(join(assetsDir, 'background.png'));
+      const portraitUri = readPngAsDataUri(join(assetsDir, 'portrait.png'));
+      if (!bgUri || !portraitUri) return null;
+
+      // Build portrait image array: [closed, slightly-open, open]
+      const portraitImgs = [portraitUri];
+      const mouthSlightly = readPngAsDataUri(join(assetsDir, 'portrait-mouth-slightly-open.png'));
+      const mouthOpen = readPngAsDataUri(join(assetsDir, 'portrait-mouth-open.png'));
+      if (mouthSlightly) portraitImgs.push(mouthSlightly);
+      if (mouthOpen) portraitImgs.push(mouthOpen);
+      while (portraitImgs.length < 3) portraitImgs.push(portraitImgs[portraitImgs.length - 1]);
+
+      // Resolve character color from character cards
+      const rawSpeaker = seq.speaker || 'Character';
+      const isDM = rawSpeaker.toLowerCase() === 'dm' || rawSpeaker.toLowerCase() === 'dungeon master';
+      const speaker = isDM ? 'Narrator' : rawSpeaker;
+
+      const charactersPath = join(__dirname, '..', 'data', 'characters.json');
+      let charColor = '#e8a033';
+      try {
+        const chars = JSON.parse(readFileSync(charactersPath, 'utf-8')).characters || [];
+        const card = chars.find(ch => ch.name.toLowerCase() === rawSpeaker.toLowerCase());
+        if (card) charColor = card.color;
+      } catch (e) { /* use default */ }
+
+      if (seq.type === 'reaction') {
+        return {
+          type: 'reaction',
+          durationMs: seq.durationSec * 1000,
+          transitionIn: seq.transitionIn || 'cut',
+          charName: speaker,
+          charColor,
+          portraitImgs: [portraitUri],
+          backgroundSrc: bgUri,
+        };
+      }
+
+      return {
+        type: 'dialogue',
+        durationMs: seq.durationSec * 1000,
+        transitionIn: seq.transitionIn || 'cut',
+        charName: speaker,
+        charColor,
+        portraitImgs,
+        backgroundSrc: bgUri,
+        dialogueLines,
+        mouthCycleMs: 150,
+        linePauseMs: 2000,
+      };
+    }
+
+    case 'dm_description': {
+      const bgUri = readPngAsDataUri(join(assetsDir, 'background.png'));
+      const portraitUri = readPngAsDataUri(join(assetsDir, 'portrait.png'));
+      if (!bgUri || !portraitUri) return null;
+
+      const portraitImgs = [portraitUri];
+      const mouthSlightly = readPngAsDataUri(join(assetsDir, 'portrait-mouth-slightly-open.png'));
+      const mouthOpen = readPngAsDataUri(join(assetsDir, 'portrait-mouth-open.png'));
+      if (mouthSlightly) portraitImgs.push(mouthSlightly);
+      if (mouthOpen) portraitImgs.push(mouthOpen);
+      while (portraitImgs.length < 3) portraitImgs.push(portraitImgs[portraitImgs.length - 1]);
+
+      return {
+        type: 'dialogue', // DM renders as dialogue in the player
+        durationMs: seq.durationSec * 1000,
+        transitionIn: seq.transitionIn || 'cut',
+        charName: 'DM',
+        charColor: '#8B7355',
+        portraitImgs,
+        backgroundSrc: bgUri,
+        dialogueLines,
+        mouthCycleMs: 150,
+        linePauseMs: 2000,
+      };
+    }
+
+    case 'close_up':
+    case 'action_closeup': {
+      // Read frame_*.png files in order
+      if (!existsSync(assetsDir)) return null;
+      const frameFiles = readdirSync(assetsDir)
+        .filter(f => f.startsWith('frame_') && f.endsWith('.png'))
+        .sort();
+      if (frameFiles.length === 0) return null;
+
+      const frameImgs = frameFiles.map(f => readPngAsDataUri(join(assetsDir, f)));
+
+      return {
+        type: 'action_closeup',
+        durationMs: seq.durationSec * 1000,
+        transitionIn: seq.transitionIn || 'flash',
+        frameImgs,
+        frameDurationMs: seq.frameDurationMs || 200,
+        bounceMode: seq.bounceMode !== false,
+      };
+    }
+
+    case 'establishing_shot': {
+      const bgUri = readPngAsDataUri(join(assetsDir, 'background.png'));
+      if (!bgUri) return null;
+
+      return {
+        type: 'establishing_shot',
+        durationMs: seq.durationSec * 1000,
+        transitionIn: seq.transitionIn || 'fade',
+        backgroundSrc: bgUri,
+      };
+    }
+
+    case 'impact': {
+      // Impact sequences are pure CSS, no PNGs. Reconstruct from storyboard data.
+      return {
+        type: 'impact',
+        durationMs: (seq.durationSec || 1) * 1000,
+        transitionIn: seq.transitionIn || 'cut',
+        effectName: seq.effectName || 'flash_white',
+        customText: seq.customText || null,
+      };
+    }
+
+    default:
+      console.warn(`reconstructPlayerData: unknown type "${seq.type}"`);
+      return null;
+  }
+}
+
+/**
+ * Read a sequence's background image from disk as raw base64 + buffer.
+ * Used for reuseBackgroundFrom resolution during reruns.
+ */
+export function readBackgroundFromDisk(seqDir) {
+  const bgPath = join(seqDir, 'assets', 'background.png');
+  if (!existsSync(bgPath)) return null;
+  const buffer = readFileSync(bgPath);
+  return { base64: buffer.toString('base64'), mimeType: 'image/png', buffer };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Single-Sequence Regeneration (Rerun Support)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Regenerate a single sequence's Gemini assets (portraits, backgrounds, frames).
+ * Used for human-in-the-loop reruns — can regenerate one sequence without
+ * rebuilding the entire moment.
+ *
+ * @param {object} params
+ * @param {object} params.seq - Storyboard sequence definition (storyboard.plan.sequences[i])
+ * @param {number} params.sequenceIndex - 0-based index
+ * @param {string} params.seqDir - Existing sequence directory path
+ * @param {string} params.direction - User creative direction
+ * @param {object} [params.sceneContext] - Scene context brief
+ * @param {object} [params.reusedBg] - Background to reuse { base64, mimeType } (from reuseBackgroundFrom)
+ * @param {object} [params.styleRef] - Previous sequence's background for visual consistency
+ * @param {function} [params.onProgress] - Progress callback
+ * @param {function} [params.checkCancelled] - Cancellation check
+ * @returns {Promise<object>} seqResult with playerData, assemblyData, html, cost, etc.
+ */
+export async function regenerateSingleSequence({
+  seq,
+  sequenceIndex,
+  seqDir,
+  direction,
+  sceneContext,
+  reusedBg,
+  styleRef,
+  onProgress,
+  checkCancelled,
+}) {
+  const progress = onProgress || (() => {});
+  const isCancelled = checkCancelled || (() => false);
+
+  // Load character cards
+  const charactersPath = join(__dirname, '..', 'data', 'characters.json');
+  let characterCards = [];
+  if (existsSync(charactersPath)) {
+    try {
+      characterCards = JSON.parse(readFileSync(charactersPath, 'utf-8')).characters || [];
+    } catch (e) { /* ignore */ }
+  }
+
+  // Fresh character cache (empty — don't reuse old portraits)
+  const characterCache = new Map();
+
+  // Clear old assets in the seq directory
+  const assetsDir = join(seqDir, 'assets');
+  if (existsSync(assetsDir)) {
+    rmSync(assetsDir, { recursive: true, force: true });
+  }
+  mkdirSync(assetsDir, { recursive: true });
+
+  // Also remove old scene.html if present
+  const oldHtml = join(seqDir, 'scene.html');
+  if (existsSync(oldHtml)) rmSync(oldHtml);
+
+  console.log(`  Regenerating sequence ${sequenceIndex + 1} (${seq.type}${seq.speaker ? ` — ${seq.speaker}` : ''})...`);
+
+  progress('sequence', {
+    status: 'generating',
+    sequenceIndex,
+    totalSequences: 1,
+    type: seq.type,
+    speaker: seq.speaker,
+  });
+
+  let seqResult;
+
+  switch (seq.type) {
+    case 'dialogue':
+      seqResult = await generateDialogueSequence(seq, seqDir, characterCache, styleRef, direction, {
+        progress, isCancelled, seqIndex: sequenceIndex, totalSeqs: 1, reusedBg, characterCards, sceneContext,
+      });
+      break;
+
+    case 'dm_description':
+      seqResult = await generateDMDescriptionSequence(seq, seqDir, characterCache, styleRef, direction, {
+        progress, isCancelled, seqIndex: sequenceIndex, totalSeqs: 1, reusedBg, sceneContext,
+      });
+      break;
+
+    case 'close_up':
+    case 'action_closeup':
+      seqResult = await generateActionSequence(seq, seqDir, styleRef, {
+        progress, isCancelled, seqIndex: sequenceIndex, totalSeqs: 1,
+      });
+      break;
+
+    case 'impact':
+      seqResult = generateImpactSequence(seq, seqDir);
+      break;
+
+    case 'establishing_shot':
+      seqResult = await generateEstablishingSequence(seq, seqDir, styleRef, {
+        progress, isCancelled, seqIndex: sequenceIndex, totalSeqs: 1, sceneContext,
+      });
+      break;
+
+    case 'reaction':
+      seqResult = await generateDialogueSequence(seq, seqDir, characterCache, styleRef, direction, {
+        progress, isCancelled, seqIndex: sequenceIndex, totalSeqs: 1, reusedBg, characterCards, sceneContext,
+      });
+      break;
+
+    default:
+      console.warn(`  Unknown sequence type: ${seq.type}, treating as establishing_shot`);
+      seqResult = await generateEstablishingSequence(seq, seqDir, styleRef, {
+        progress, isCancelled, seqIndex: sequenceIndex, totalSeqs: 1, sceneContext,
+      });
+  }
+
+  // Assemble individual sequence HTML
+  if ((seq.type === 'dialogue' || seq.type === 'dm_description' || seq.type === 'reaction') && seqResult.assemblyData) {
+    const html = assembleAnimatedDialogueScene(seqResult.assemblyData);
+    const htmlPath = join(seqDir, 'scene.html');
+    writeFileSync(htmlPath, html);
+    seqResult.html = htmlPath;
+  } else if ((seq.type === 'action_closeup' || seq.type === 'close_up') && seqResult.assemblyData) {
+    const html = assembleActionBounceScene(seqResult.assemblyData);
+    const htmlPath = join(seqDir, 'scene.html');
+    writeFileSync(htmlPath, html);
+    seqResult.html = htmlPath;
+  } else if (seq.type === 'establishing_shot' && seqResult.playerData) {
+    const html = assembleSequencePlayerScene({
+      sequences: [seqResult.playerData],
+      totalDurationMs: seq.durationSec * 1000,
+      sceneTitle: 'Establishing Shot — D&D Shorts',
+    });
+    const htmlPath = join(seqDir, 'scene.html');
+    writeFileSync(htmlPath, html);
+    seqResult.html = htmlPath;
+  }
+  // Impact sequences write their own HTML in the generator
+
+  progress('sequence', {
+    status: seqResult._qaFailed ? 'qa_failed' : 'complete',
+    sequenceIndex,
+    totalSequences: 1,
+    type: seq.type,
+    cost: seqResult.cost,
+  });
+
+  console.log(`  Sequence ${sequenceIndex + 1} regenerated: ${seqResult._qaFailed ? 'QA FAILED' : 'OK'} ($${(seqResult.cost || 0).toFixed(2)})`);
+
+  return seqResult;
 }
 
 // ═══════════════════════════════════════════════════════════════

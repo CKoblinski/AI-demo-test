@@ -237,7 +237,8 @@
       "imagePath": "data/portraits/bixie_tense_mm5fkd2q.png",
       "sessionId": null,
       "quality": 1,
-      "createdAt": "2026-02-27T21:54:56.691Z"
+      "createdAt": "2026-02-27T21:54:56.691Z",
+      "rating": "good"
     },
     {
       "id": "hodim_tense_mm5flxho",
@@ -288,6 +289,67 @@
       "sessionId": null,
       "quality": 1,
       "createdAt": "2026-02-28T06:44:21.505Z"
+    },
+    {
+      "id": "hodim_triumphant_mm60zpl1",
+      "entityId": "hodim",
+      "mood": "triumphant",
+      "description": "Hodim — intense focus, eyes locked on the glowing ring. Determined expression with jaw set. Young earnest face showing resolve and divine purpose.",
+      "imagePath": "data/portraits/hodim_triumphant_mm60zpl1.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T07:54:44.678Z"
+    },
+    {
+      "id": "everyone_triumphant_mm611hoi",
+      "entityId": "everyone",
+      "mood": "triumphant",
+      "description": "Multiple excited faces overlapping — genuine shock and celebration. Wide eyes, open mouths, pure table excitement.",
+      "imagePath": "data/portraits/everyone_triumphant_mm611hoi.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T07:56:07.746Z"
+    },
+    {
+      "id": "narrator_neutral_mm61666t",
+      "entityId": "narrator",
+      "mood": "neutral",
+      "description": "Hooded mysterious sage storyteller, face partially obscured by deep hood, warm wise eyes visible in shadow, dark flowing robes, aged hands. Fantasy RPG dungeon master narrator character. Warm candlelight from below illuminating chin and lower face.",
+      "imagePath": "data/portraits/narrator_neutral_mm61666t.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T07:59:46.133Z"
+    },
+    {
+      "id": "hodim_triumphant_mm63b9ya",
+      "entityId": "hodim",
+      "mood": "triumphant",
+      "description": "Hodim — determined expression, brown hair, raising his hand that holds the ancient divine artifact that glows with warm golden light when activated. When held by a holy warrior attuned to divine magic, it channels radiant energy with devastating purity. The ring resonates with dead divine relics and seems capable of purging corruption from both objects and living things. Its full purpose and power remain unknown.. The ring glows with warm golden light. Eyes focused and resolute.",
+      "imagePath": "data/portraits/hodim_triumphant_mm63b9ya.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T08:59:43.523Z"
+    },
+    {
+      "id": "narrator_neutral_mm63frcf",
+      "entityId": "narrator",
+      "mood": "neutral",
+      "description": "Hooded mysterious sage storyteller, face partially obscured by deep hood, warm wise eyes visible in shadow, dark flowing robes, aged hands. Fantasy RPG dungeon master narrator character. Warm candlelight from below illuminating chin and lower face.",
+      "imagePath": "data/portraits/narrator_neutral_mm63frcf.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T09:03:12.688Z"
+    },
+    {
+      "id": "hodim_ominous_mm63o866",
+      "entityId": "hodim",
+      "mood": "ominous",
+      "description": "Hodim — determined expression, brown hair, raising his hand that holds the ancient divine artifact that glows with warm golden light when activated. When held by a holy warrior attuned to divine magic, it channels radiant energy with devastating purity. The ring resonates with dead divine relics and seems capable of purging corruption from both objects and living things. Its full purpose and power remain unknown.. The ring glows with warm golden light. Eyes focused and resolute.",
+      "imagePath": "data/portraits/hodim_ominous_mm63o866.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T09:09:47.742Z"
     }
-  ]
+  ],
+  "backgrounds": []
 }

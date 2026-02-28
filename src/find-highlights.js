@@ -1,25 +1,27 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const PROMPT_PATH = join(__dirname, '..', 'prompts', 'highlight-finder.md');
+const PROMPT_PATH_HAIKU = join(__dirname, '..', 'prompts', 'highlight-finder.md');
+const PROMPT_PATH_OPUS = join(__dirname, '..', 'prompts', 'highlight-finder-opus.md');
+const KNOWLEDGE_PATH = join(__dirname, '..', 'data', 'knowledge.json');
 
 // ~4 chars per token is a rough estimate for English text
 const CHARS_PER_TOKEN = 4;
-// Stay well under the rate limit — target ~20K input tokens per request
+// Haiku chunking limits — stay well under rate limit
 const MAX_INPUT_TOKENS = 20000;
-// System prompt is ~3K tokens, leave room for it
 const MAX_TRANSCRIPT_TOKENS = MAX_INPUT_TOKENS - 4000;
 const MAX_TRANSCRIPT_CHARS = MAX_TRANSCRIPT_TOKENS * CHARS_PER_TOKEN;
 
 /**
  * Find highlight moments in a parsed D&D session using Claude.
  *
- * For large transcripts (>20K tokens), splits into overlapping chunks
- * and sends each chunk separately, then merges and deduplicates results.
+ * Two code paths:
+ * - Opus (default): sends the full transcript in a single request. Better quality, ~$1.20/session.
+ * - Haiku: splits into overlapping chunks. Cheaper (~$0.25/session), less global context.
  *
  * @param {object} session - Parsed session data from parse-vtt.js
  * @param {object} options - { apiKey, model, userContext }
@@ -32,8 +34,11 @@ export async function findHighlights(session, options = {}) {
     throw new Error('ANTHROPIC_API_KEY is required. Set it in .env or pass via options.');
   }
 
-  const model = options.model || 'claude-haiku-4-5-20251001';
-  const systemPrompt = readFileSync(PROMPT_PATH, 'utf-8');
+  const model = options.model || 'claude-opus-4-6';
+  const isOpus = model.includes('opus');
+
+  const promptPath = isOpus ? PROMPT_PATH_OPUS : PROMPT_PATH_HAIKU;
+  const systemPrompt = readFileSync(promptPath, 'utf-8');
 
   // Build the transcript payload for Claude
   // Include session metadata + gameplay cues only (skip pre-session banter)
@@ -49,6 +54,110 @@ export async function findHighlights(session, options = {}) {
       }).join('\n')
     : '  (No speaker identification available — this is an auto-caption transcript)';
 
+  if (isOpus) {
+    return findHighlightsOpus(apiKey, model, systemPrompt, session, gameplayCues, speakerSummary, userContext);
+  } else {
+    return findHighlightsChunked(apiKey, model, systemPrompt, session, gameplayCues, speakerSummary, userContext);
+  }
+}
+
+// ═══════════════════════════════════════
+// Opus path — single request, full transcript
+// ═══════════════════════════════════════
+
+async function findHighlightsOpus(apiKey, model, systemPrompt, session, gameplayCues, speakerSummary, userContext) {
+  const sessionHeader = buildSessionHeader(session, gameplayCues, speakerSummary, userContext);
+
+  // Load character knowledge for Opus context
+  const knowledgeSection = buildKnowledgeSection();
+
+  // Format full transcript (no chunking)
+  const cueLines = gameplayCues.map(c => formatCueLine(c));
+  const fullTranscript = cueLines.join('\n');
+
+  const totalChars = sessionHeader.length + knowledgeSection.length + fullTranscript.length;
+  const estTokens = Math.round(totalChars / CHARS_PER_TOKEN / 1000);
+
+  console.log(`\nSending FULL transcript to Opus (${gameplayCues.length} cues, ~${estTokens}k tokens)...`);
+  console.log(`  Model: ${model}`);
+  console.log(`  Estimated cost: ~$${(estTokens * 15 / 1000 + 4 * 75 / 1000).toFixed(2)}`);
+
+  const userMessage = sessionHeader +
+    knowledgeSection +
+    `\n## Transcript (gameplay section only)\nEach line: [cueId] MM:SS Speaker: Text\n\n` +
+    fullTranscript;
+
+  const highlights = await callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, 3, 16384);
+
+  // Validate editedDialogue cueIds if present
+  for (const h of highlights) {
+    if (h.editedDialogue) {
+      for (const line of h.editedDialogue) {
+        if (typeof line.cueId !== 'number') {
+          console.warn(`  Warning: editedDialogue line missing cueId in highlight "${h.title}"`);
+        }
+      }
+    }
+  }
+
+  console.log(`\nFound ${highlights.length} highlights (globally ranked).`);
+  return highlights;
+}
+
+/**
+ * Build a knowledge section with character cards for Opus context.
+ * Gives the model information about characters, abilities, and signature items.
+ */
+function buildKnowledgeSection() {
+  if (!existsSync(KNOWLEDGE_PATH)) return '';
+
+  try {
+    const kb = JSON.parse(readFileSync(KNOWLEDGE_PATH, 'utf-8'));
+    const chars = [...(kb.characters || []), ...(kb.npcs || [])];
+    if (chars.length === 0) return '';
+
+    let section = '\n## Character Knowledge\nThese are the known characters in this campaign. Use this to identify moments involving named items, abilities, and character dynamics.\n\n';
+
+    for (const c of chars) {
+      section += `### ${c.name}`;
+      if (c.race) section += ` (${c.race}`;
+      if (c.class) section += ` ${c.class}`;
+      if (c.race) section += ')';
+      section += '\n';
+
+      if (c.visualDescription) {
+        section += `Visual: ${c.visualDescription}\n`;
+      }
+      if (c.signatureItems?.length) {
+        section += `Signature Items: ${c.signatureItems.map(i => `${i.name} — ${i.visualDescription}`).join('; ')}\n`;
+      }
+      if (c.keyAbilities?.length) {
+        section += `Key Abilities: ${c.keyAbilities.join('; ')}\n`;
+      }
+      section += '\n';
+    }
+
+    // Include locations if any
+    if (kb.locations?.length) {
+      section += '### Known Locations\n';
+      for (const loc of kb.locations) {
+        section += `- **${loc.name}**: ${loc.visualDescription}\n`;
+      }
+      section += '\n';
+    }
+
+    return section;
+  } catch (err) {
+    console.warn(`Failed to load knowledge for Opus context: ${err.message}`);
+    return '';
+  }
+}
+
+// ═══════════════════════════════════════
+// Haiku path — chunked requests (original logic)
+// ═══════════════════════════════════════
+
+async function findHighlightsChunked(apiKey, model, systemPrompt, session, gameplayCues, speakerSummary, userContext) {
   const sessionHeader = buildSessionHeader(session, gameplayCues, speakerSummary, userContext);
 
   // Format all cue lines
@@ -116,17 +225,22 @@ export async function findHighlights(session, options = {}) {
   return topN;
 }
 
+// ═══════════════════════════════════════
+// Shared helpers
+// ═══════════════════════════════════════
+
 /**
  * Call Claude with retry + exponential backoff for rate limits.
  */
-async function callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, maxRetries = 3) {
-  const client = new Anthropic({ apiKey, timeout: 120000 });
+async function callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, maxRetries = 3, maxTokens = 8192) {
+  const isOpus = model.includes('opus');
+  const client = new Anthropic({ apiKey, timeout: isOpus ? 300000 : 120000 });
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await client.messages.create({
         model,
-        max_tokens: 8192,
+        max_tokens: maxTokens,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       });
@@ -135,6 +249,13 @@ async function callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, max
         .filter(block => block.type === 'text')
         .map(block => block.text)
         .join('');
+
+      // Log usage for cost tracking
+      if (response.usage) {
+        const inputCost = response.usage.input_tokens * (isOpus ? 15 : 0.8) / 1_000_000;
+        const outputCost = response.usage.output_tokens * (isOpus ? 75 : 4) / 1_000_000;
+        console.log(`  API usage: ${response.usage.input_tokens} in / ${response.usage.output_tokens} out — $${(inputCost + outputCost).toFixed(3)}`);
+      }
 
       // Try to parse JSON — Claude might wrap it in ```json``` blocks
       let jsonStr = responseText;

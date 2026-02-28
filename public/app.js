@@ -10,6 +10,11 @@ let cachedSession = null; // cache for returning to plan screen
 // ── Screen Navigation ──
 
 function showScreen(name) {
+  // Auto-switch to Factory tab if we're on another tab
+  const factoryPanel = document.getElementById('tab-factory');
+  if (factoryPanel && !factoryPanel.classList.contains('active')) {
+    switchTab('factory');
+  }
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(`screen-${name}`).classList.add('active');
 }
@@ -55,6 +60,8 @@ submitBtn.addEventListener('click', async () => {
   const formData = new FormData();
   formData.append('vtt', selectedFile);
   formData.append('context', contextInput.value);
+  const modelRadio = document.querySelector('input[name="analysis-model"]:checked');
+  if (modelRadio) formData.append('analysisModel', modelRadio.value);
 
   try {
     const res = await fetch('/api/sessions', { method: 'POST', body: formData });
@@ -142,6 +149,11 @@ function updateUI(session) {
     case 'exporting':
       showScreen('generating');
       renderGenerating(session);
+      break;
+
+    case 'rerunning_sequence':
+      showScreen('generating');
+      renderRerunProgress(session);
       break;
 
     case 'complete':
@@ -1218,6 +1230,7 @@ function renderResults(session) {
           <span class="result-seq-type">${typeLabel}</span>
           ${sq.speaker ? `<span class="result-seq-speaker">${esc(sq.speaker)}</span>` : ''}
           <span class="result-seq-cost">$${(sq.cost || 0).toFixed(2)}</span>
+          <button class="btn-rerun" data-seq-index="${i}">Rerun</button>
         </div>
       `;
     });
@@ -1324,6 +1337,117 @@ document.getElementById('new-session-btn').addEventListener('click', () => {
   loadRecentSessions();
 });
 
+// ── Rerun Sequence ──
+
+let rerunSeqIndex = null;
+
+// Event delegation for rerun buttons on sequence cards
+document.getElementById('result-assets').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-rerun');
+  if (!btn) return;
+  rerunSeqIndex = parseInt(btn.dataset.seqIndex);
+  openRerunModal(rerunSeqIndex);
+});
+
+function openRerunModal(seqIndex) {
+  const modal = document.getElementById('rerun-modal');
+  document.getElementById('rerun-seq-num').textContent = `#${seqIndex + 1}`;
+
+  // Build description from cached session
+  const gen = cachedSession?.generation;
+  if (gen?.sequences?.[seqIndex]) {
+    const sq = gen.sequences[seqIndex];
+    const typeLabel = SEQ_TYPE_LABELS[sq.type] || sq.type;
+    const desc = sq.speaker ? `${typeLabel} — ${sq.speaker}` : typeLabel;
+    document.getElementById('rerun-seq-desc').textContent = desc;
+  } else {
+    document.getElementById('rerun-seq-desc').textContent = '';
+  }
+
+  // Reset form
+  document.querySelector('input[name="rerun-mode"][value="reattempt"]').checked = true;
+  document.getElementById('rerun-instructions-text').value = '';
+
+  modal.style.display = 'flex';
+}
+
+function closeRerunModal() {
+  document.getElementById('rerun-modal').style.display = 'none';
+  rerunSeqIndex = null;
+}
+
+document.getElementById('rerun-cancel-btn').addEventListener('click', closeRerunModal);
+document.querySelector('.modal-overlay').addEventListener('click', closeRerunModal);
+
+document.getElementById('rerun-submit-btn').addEventListener('click', async () => {
+  if (rerunSeqIndex === null || !currentSessionId) return;
+
+  const mode = document.querySelector('input[name="rerun-mode"]:checked').value;
+  const instructions = document.getElementById('rerun-instructions-text').value.trim();
+
+  closeRerunModal();
+
+  try {
+    const res = await fetch(`/api/sessions/${currentSessionId}/sequences/${rerunSeqIndex}/rerun`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, instructions }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Rerun failed: ${err.error}`);
+      return;
+    }
+
+    showScreen('generating');
+    startPolling();
+  } catch (err) {
+    alert(`Rerun failed: ${err.message}`);
+  }
+});
+
+function renderRerunProgress(session) {
+  const container = document.getElementById('gen-sequences');
+  const rerun = session.rerun || {};
+  const seqIdx = rerun.sequenceIndex ?? '?';
+  const gen = session.generation;
+  const sq = gen?.sequences?.[seqIdx];
+  const typeLabel = sq ? (SEQ_TYPE_LABELS[sq.type] || sq.type) : '';
+  const speaker = sq?.speaker || '';
+
+  let statusText = 'Starting...';
+  let statusIcon = '\u23F3';
+  switch (rerun.status) {
+    case 'rewriting': statusText = 'Director AI rewriting descriptions...'; statusIcon = '\uD83D\uDCDD'; break;
+    case 'generating': statusText = 'Generating new assets...'; statusIcon = '\uD83C\uDFA8'; break;
+    case 'assembling': statusText = 'Rebuilding sequence player...'; statusIcon = '\uD83D\uDD27'; break;
+    case 'exporting': statusText = 'Exporting video...'; statusIcon = '\uD83C\uDFAC'; break;
+    case 'complete': statusText = 'Complete!'; statusIcon = '\u2705'; break;
+    case 'failed': statusText = `Failed: ${rerun.error || 'Unknown error'}`; statusIcon = '\u274C'; break;
+  }
+
+  container.innerHTML = `
+    <div class="rerun-progress">
+      <h3>Rerunning Sequence ${seqIdx + 1}</h3>
+      <p class="rerun-detail">${typeLabel}${speaker ? ` — ${speaker}` : ''} (${rerun.mode === 'rewrite' ? 'Rewrite' : 'Re-attempt'})</p>
+      <div class="rerun-status">${statusIcon} ${statusText}</div>
+    </div>
+  `;
+
+  document.getElementById('gen-message').textContent = session.progress?.message || '';
+  document.getElementById('gen-cost').textContent = '';
+
+  // Update progress bar
+  const pct = session.progress?.percent || 0;
+  const bar = document.getElementById('gen-progress');
+  if (bar) bar.style.width = pct + '%';
+
+  // Show the sequences container and hide cancel button during rerun
+  const seqContainer = document.getElementById('gen-sequences');
+  if (seqContainer) seqContainer.style.display = 'block';
+}
+
 // ── Recent Sessions ──
 
 async function loadRecentSessions() {
@@ -1366,6 +1490,495 @@ function esc(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ═══════════════════════════════════════
+// Tab Navigation System
+// ═══════════════════════════════════════
+
+function switchTab(tabName) {
+  // Toggle tab buttons
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+
+  // Toggle tab panels
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `tab-${tabName}`);
+  });
+
+  // Lazy-load tab data
+  if (tabName === 'sessions') loadAllSessions();
+  if (tabName === 'cards') loadKnowledgeBase();
+}
+
+// Bind tab buttons
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+// ═══════════════════════════════════════
+// Sessions Tab
+// ═══════════════════════════════════════
+
+let allSessionsCache = null;
+
+async function loadAllSessions() {
+  const container = document.getElementById('all-sessions-list');
+  if (!container) return;
+
+  try {
+    const res = await fetch('/api/sessions');
+    const sessions = await res.json();
+    allSessionsCache = sessions;
+    renderAllSessions(sessions);
+  } catch (err) {
+    container.innerHTML = `<p class="cards-empty">Failed to load sessions: ${err.message}</p>`;
+  }
+}
+
+function renderAllSessions(sessions) {
+  const container = document.getElementById('all-sessions-list');
+  container.innerHTML = '';
+
+  if (!sessions || sessions.length === 0) {
+    container.innerHTML = '<p class="cards-empty">No sessions yet. Upload a VTT in the Factory tab to get started.</p>';
+    return;
+  }
+
+  // Sort newest first
+  const sorted = [...sessions].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  sorted.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'session-row';
+    row.id = `session-row-${s.id}`;
+
+    // Info
+    const dateStr = new Date(s.createdAt).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+    const model = s.analysisModel ? s.analysisModel.replace('claude-', '').split('-')[0] : '';
+    const momentTitle = s.momentTitle || s.id;
+    const cost = s.totalCost ? `$${s.totalCost.toFixed(2)}` : '';
+
+    // Stage badge
+    const stage = s.stage || 'unknown';
+    const stageColors = {
+      complete: 'background:rgba(61,220,132,0.15);color:var(--success)',
+      plan_ready: 'background:rgba(255,170,0,0.15);color:var(--warning)',
+      storyboard_ready: 'background:rgba(255,170,0,0.15);color:var(--warning)',
+      analyzing: 'background:rgba(200,160,48,0.15);color:var(--accent)',
+      generating: 'background:rgba(200,160,48,0.15);color:var(--accent)',
+      exporting: 'background:rgba(200,160,48,0.15);color:var(--accent)',
+      failed: 'background:rgba(255,68,68,0.15);color:var(--error)',
+    };
+    const stageStyle = stageColors[stage] || 'background:rgba(255,255,255,0.05);color:var(--text-dim)';
+
+    row.innerHTML = `
+      <div class="session-row-info">
+        <div class="session-row-title">${esc(momentTitle)}</div>
+        <div class="session-row-meta">
+          <span>${dateStr}</span>
+          ${model ? `<span>${esc(model)}</span>` : ''}
+          ${cost ? `<span>${cost}</span>` : ''}
+        </div>
+      </div>
+      <span class="session-row-stage" style="${stageStyle}">${stage.replace(/_/g, ' ')}</span>
+      <div class="session-row-actions">
+        <button class="btn-small" onclick="resumeFromSessions('${s.id}')">Resume</button>
+        ${stage === 'complete' ? `<button class="btn-small" onclick="downloadSession('${s.id}')">Download</button>` : ''}
+        <button class="btn-small btn-danger" onclick="hideSession('${s.id}')">Hide</button>
+      </div>
+    `;
+
+    container.appendChild(row);
+  });
+}
+
+window.resumeFromSessions = function(id) {
+  currentSessionId = id;
+  switchTab('factory');
+  startPolling();
+};
+
+window.downloadSession = function(id) {
+  window.location.href = `/api/sessions/${id}/download`;
+};
+
+window.hideSession = async function(id) {
+  try {
+    const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      const row = document.getElementById(`session-row-${id}`);
+      if (row) row.remove();
+    } else {
+      const err = await res.json();
+      alert(`Failed: ${err.error}`);
+    }
+  } catch (err) {
+    alert(`Failed: ${err.message}`);
+  }
+};
+
+// ═══════════════════════════════════════
+// Cards Tab (Knowledge Base)
+// ═══════════════════════════════════════
+
+let knowledgeCache = null;
+let activeCardsSection = 'characters';
+
+async function loadKnowledgeBase() {
+  try {
+    const res = await fetch('/api/knowledge');
+    if (!res.ok) throw new Error('Failed to load knowledge base');
+    knowledgeCache = await res.json();
+    renderCardsSection(activeCardsSection);
+  } catch (err) {
+    const container = document.getElementById('cards-content');
+    if (container) container.innerHTML = `<p class="cards-empty">Failed to load knowledge base: ${err.message}</p>`;
+  }
+}
+
+// Sub-nav click
+document.querySelectorAll('.cards-nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    activeCardsSection = btn.dataset.section;
+    document.querySelectorAll('.cards-nav-btn').forEach(b => b.classList.toggle('active', b === btn));
+    renderCardsSection(activeCardsSection);
+  });
+});
+
+function renderCardsSection(section) {
+  const container = document.getElementById('cards-content');
+  if (!container || !knowledgeCache) return;
+  container.innerHTML = '';
+
+  switch (section) {
+    case 'characters':
+      renderEntityCards(container, filterEntities('pc'), 'character');
+      break;
+    case 'npcs':
+      renderEntityCards(container, filterEntities('npc', 'creature', 'monster'), 'npc');
+      break;
+    case 'locations':
+      renderEntityCards(container, filterEntities('location', 'place'), 'location');
+      break;
+    case 'portraits':
+      renderPortraitGallery(container);
+      break;
+    case 'backgrounds':
+      renderBackgroundGallery(container);
+      break;
+  }
+}
+
+function filterEntities(...types) {
+  if (!knowledgeCache || !knowledgeCache.entities) return [];
+  return knowledgeCache.entities.filter(e => {
+    const t = (e.type || '').toLowerCase();
+    return types.some(tp => t.includes(tp));
+  });
+}
+
+function renderEntityCards(container, entities, section) {
+  if (!entities || entities.length === 0) {
+    container.innerHTML = `<p class="cards-empty">No ${section}s found in the knowledge base yet. Run an analysis to discover them.</p>`;
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'entity-cards-grid';
+
+  entities.forEach(entity => {
+    const card = document.createElement('div');
+    card.className = 'entity-card';
+
+    // Color dot
+    const color = entity.color || '#666';
+
+    // Tags
+    let tagsHtml = '';
+    if (entity.tags && entity.tags.length > 0) {
+      tagsHtml = `<div class="entity-tags">${entity.tags.map(t => `<span class="entity-tag">${esc(t)}</span>`).join('')}</div>`;
+    }
+
+    // Signature items
+    let itemsHtml = '';
+    if (entity.signatureItems && entity.signatureItems.length > 0) {
+      itemsHtml = `<div class="entity-field-label">Signature Items</div><ul class="entity-items">${entity.signatureItems.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`;
+    }
+
+    // Key abilities
+    let abilitiesHtml = '';
+    if (entity.keyAbilities && entity.keyAbilities.length > 0) {
+      abilitiesHtml = `<div class="entity-field-label">Key Abilities</div><ul class="entity-abilities">${entity.keyAbilities.map(a => `<li>${esc(a)}</li>`).join('')}</ul>`;
+    }
+
+    // Conditional features
+    let condHtml = '';
+    if (entity.conditionalFeatures && entity.conditionalFeatures.length > 0) {
+      condHtml = `<div class="entity-field-label">Conditional Features</div><div class="entity-field">${entity.conditionalFeatures.map(c => esc(c)).join('; ')}</div>`;
+    }
+
+    // Inline portrait thumbnail
+    let portraitThumb = '';
+    const portrait = findPortraitForEntity(entity.name);
+    if (portrait) {
+      const thumbSrc = portrait.imagePath ? `/${portrait.imagePath}` : `/data/portraits/${portrait.filename || portrait.id + '.png'}`;
+      portraitThumb = `<img src="${thumbSrc}" class="entity-portrait-thumb" alt="${esc(entity.name)}" onerror="this.style.display='none'">`;
+    }
+
+    card.innerHTML = `
+      <div class="entity-card-header">
+        <div class="entity-color-dot" style="background:${esc(color)}"></div>
+        <div class="entity-card-name">${esc(entity.name)}</div>
+        ${portraitThumb}
+        <span class="entity-card-type">${esc(entity.type || section)}</span>
+      </div>
+      <div class="entity-card-body">
+        ${entity.visualDescription ? `
+          <div>
+            <div class="entity-field-label">Visual Description</div>
+            <div class="entity-field entity-field-editable" data-entity-id="${esc(entity.id)}" data-field="visualDescription" onclick="startEntityEdit(this)">${esc(entity.visualDescription)}</div>
+          </div>
+        ` : ''}
+        ${condHtml}
+        ${itemsHtml}
+        ${abilitiesHtml}
+        ${tagsHtml}
+      </div>
+    `;
+
+    grid.appendChild(card);
+  });
+
+  container.appendChild(grid);
+}
+
+function findPortraitForEntity(name) {
+  if (!knowledgeCache || !knowledgeCache.portraits) return null;
+  const nameLower = name.toLowerCase();
+  const matches = knowledgeCache.portraits.filter(p => {
+    const entityMatch = (p.entityName && p.entityName.toLowerCase() === nameLower) ||
+                        (p.entityId && p.entityId.toLowerCase() === nameLower);
+    return entityMatch && p.rating !== 'bad';
+  });
+  return matches.length > 0 ? matches[matches.length - 1] : null;
+}
+
+// ── Inline Entity Editing ──
+
+window.startEntityEdit = function(el) {
+  const entityId = el.dataset.entityId;
+  const field = el.dataset.field;
+  const currentValue = el.textContent;
+
+  el.outerHTML = `
+    <div class="entity-edit-area" data-entity-id="${esc(entityId)}" data-field="${esc(field)}">
+      <textarea class="sb-textarea">${esc(currentValue)}</textarea>
+      <div class="entity-edit-actions">
+        <button class="btn-small" onclick="saveEntityEdit(this)">Save</button>
+        <button class="btn-small" onclick="cancelEntityEdit(this, '${esc(currentValue).replace(/'/g, "\\'")}')">Cancel</button>
+      </div>
+    </div>
+  `;
+};
+
+window.saveEntityEdit = async function(btn) {
+  const area = btn.closest('.entity-edit-area');
+  const entityId = area.dataset.entityId;
+  const field = area.dataset.field;
+  const newValue = area.querySelector('textarea').value;
+
+  try {
+    const res = await fetch(`/api/knowledge/characters/${entityId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: newValue }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Save failed: ${err.error}`);
+      return;
+    }
+
+    // Update local cache
+    if (knowledgeCache && knowledgeCache.entities) {
+      const entity = knowledgeCache.entities.find(e => e.id === entityId);
+      if (entity) entity[field] = newValue;
+    }
+
+    area.outerHTML = `<div class="entity-field entity-field-editable" data-entity-id="${esc(entityId)}" data-field="${esc(field)}" onclick="startEntityEdit(this)">${esc(newValue)}</div>`;
+  } catch (err) {
+    alert(`Save failed: ${err.message}`);
+  }
+};
+
+window.cancelEntityEdit = function(btn, originalValue) {
+  const area = btn.closest('.entity-edit-area');
+  const entityId = area.dataset.entityId;
+  const field = area.dataset.field;
+  area.outerHTML = `<div class="entity-field entity-field-editable" data-entity-id="${esc(entityId)}" data-field="${esc(field)}" onclick="startEntityEdit(this)">${originalValue}</div>`;
+};
+
+// ── Portrait Gallery ──
+
+function renderPortraitGallery(container) {
+  if (!knowledgeCache || !knowledgeCache.portraits || knowledgeCache.portraits.length === 0) {
+    container.innerHTML = '<p class="cards-empty">No portraits indexed yet. Generate a scene in the Factory to add portraits.</p>';
+    return;
+  }
+
+  const gallery = document.createElement('div');
+  gallery.className = 'portrait-gallery';
+
+  // Group by entity name (fall back to entityId)
+  const groups = {};
+  knowledgeCache.portraits.forEach(p => {
+    const key = p.entityName || p.entityId || 'Unknown';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  });
+
+  for (const [entityName, portraits] of Object.entries(groups)) {
+    const groupDiv = document.createElement('div');
+    groupDiv.innerHTML = `<div class="portrait-group-title">${esc(entityName)}</div>`;
+
+    const grid = document.createElement('div');
+    grid.className = 'portrait-grid';
+
+    portraits.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'portrait-card';
+      card.id = `portrait-${p.id}`;
+
+      const goodActive = p.rating === 'good' ? ' active' : '';
+      const badActive = p.rating === 'bad' ? ' active' : '';
+
+      const imgSrc = p.imagePath ? `/${p.imagePath}` : `/data/portraits/${p.filename || p.id + '.png'}`;
+      card.innerHTML = `
+        <img src="${imgSrc}" alt="${esc(entityName)}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%2312121a%22 width=%221%22 height=%221%22/></svg>'">
+        <div class="portrait-card-info">${p.sessionId || p.mood || ''}</div>
+        <div class="portrait-rating">
+          <button class="portrait-rating-btn rating-good${goodActive}" onclick="ratePortrait('${p.id}', 'good', this)" title="Good — prefer this portrait">👍</button>
+          <button class="portrait-rating-btn rating-bad${badActive}" onclick="ratePortrait('${p.id}', 'bad', this)" title="Bad — skip in future">👎</button>
+        </div>
+      `;
+
+      grid.appendChild(card);
+    });
+
+    groupDiv.appendChild(grid);
+    gallery.appendChild(groupDiv);
+  }
+
+  container.appendChild(gallery);
+}
+
+window.ratePortrait = async function(id, rating, btn) {
+  // Toggle: if already active, set to null
+  const isActive = btn.classList.contains('active');
+  const newRating = isActive ? null : rating;
+
+  try {
+    const res = await fetch(`/api/knowledge/portraits/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating: newRating }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Rating failed: ${err.error}`);
+      return;
+    }
+
+    // Update local cache
+    if (knowledgeCache && knowledgeCache.portraits) {
+      const p = knowledgeCache.portraits.find(p => p.id === id);
+      if (p) p.rating = newRating;
+    }
+
+    // Update UI — clear both buttons, set active on the toggled one
+    const card = btn.closest('.portrait-rating');
+    card.querySelectorAll('.portrait-rating-btn').forEach(b => b.classList.remove('active'));
+    if (!isActive) btn.classList.add('active');
+
+  } catch (err) {
+    alert(`Rating failed: ${err.message}`);
+  }
+};
+
+// ── Background Gallery ──
+
+function renderBackgroundGallery(container) {
+  if (!knowledgeCache || !knowledgeCache.backgrounds || knowledgeCache.backgrounds.length === 0) {
+    container.innerHTML = '<p class="cards-empty">No backgrounds indexed yet. Generate a scene in the Factory to add backgrounds.</p>';
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'bg-gallery';
+
+  knowledgeCache.backgrounds.forEach(bg => {
+    const card = document.createElement('div');
+    card.className = 'bg-card';
+    card.id = `bg-${bg.id}`;
+
+    const goodActive = bg.rating === 'good' ? ' active' : '';
+    const badActive = bg.rating === 'bad' ? ' active' : '';
+
+    const bgSrc = bg.imagePath ? `/${bg.imagePath}` : `/data/backgrounds/${bg.filename || bg.id + '.png'}`;
+    card.innerHTML = `
+      <img src="${bgSrc}" alt="background" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 9%22><rect fill=%22%2312121a%22 width=%2216%22 height=%229%22/></svg>'">
+      <div class="bg-card-info">
+        ${bg.locationTag ? `<span class="bg-card-tag">${esc(bg.locationTag)}</span>` : ''}
+        ${bg.mood ? `<span class="bg-card-mood">${esc(bg.mood)}</span>` : ''}
+      </div>
+      <div class="portrait-rating">
+        <button class="portrait-rating-btn rating-good${goodActive}" onclick="rateBackground('${bg.id}', 'good', this)">👍</button>
+        <button class="portrait-rating-btn rating-bad${badActive}" onclick="rateBackground('${bg.id}', 'bad', this)">👎</button>
+      </div>
+    `;
+
+    grid.appendChild(card);
+  });
+
+  container.appendChild(grid);
+}
+
+window.rateBackground = async function(id, rating, btn) {
+  const isActive = btn.classList.contains('active');
+  const newRating = isActive ? null : rating;
+
+  try {
+    const res = await fetch(`/api/knowledge/backgrounds/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating: newRating }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Rating failed: ${err.error}`);
+      return;
+    }
+
+    // Update local cache
+    if (knowledgeCache && knowledgeCache.backgrounds) {
+      const bg = knowledgeCache.backgrounds.find(b => b.id === id);
+      if (bg) bg.rating = newRating;
+    }
+
+    const card = btn.closest('.portrait-rating');
+    card.querySelectorAll('.portrait-rating-btn').forEach(b => b.classList.remove('active'));
+    if (!isActive) btn.classList.add('active');
+
+  } catch (err) {
+    alert(`Rating failed: ${err.message}`);
+  }
+};
 
 // ── Init ──
 
