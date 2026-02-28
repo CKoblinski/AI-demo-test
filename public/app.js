@@ -1754,6 +1754,16 @@ function renderCardsSection(section) {
   if (!container || !knowledgeCache) return;
   container.innerHTML = '';
 
+  // Add "New" button for entity sections
+  if (['characters', 'npcs', 'locations'].includes(section)) {
+    const defaultType = section === 'characters' ? 'pc' : section === 'npcs' ? 'npc' : 'location';
+    const label = section === 'characters' ? 'Character' : section === 'npcs' ? 'NPC / Creature' : 'Location';
+    const addBar = document.createElement('div');
+    addBar.className = 'cards-action-bar';
+    addBar.innerHTML = `<button class="btn-add-card" onclick="showNewEntityForm('${defaultType}', '${esc(label)}')">+ New ${esc(label)}</button>`;
+    container.appendChild(addBar);
+  }
+
   switch (section) {
     case 'characters':
       renderEntityCards(container, filterEntities('pc'), 'character');
@@ -1852,6 +1862,7 @@ function renderEntityCards(container, entities, section) {
         <div class="entity-card-name">${esc(entity.name)}</div>
         ${portraitThumb}
         <span class="entity-card-type">${esc(entity.type || section)}</span>
+        <button class="btn-card-delete" onclick="deleteEntity('${esc(entity.id)}', this)" title="Delete this card">×</button>
       </div>
       ${subtitleHtml}
       <div class="entity-card-body">
@@ -1944,6 +1955,191 @@ window.cancelEntityEdit = function(btn, originalValue) {
   area.outerHTML = `<div class="entity-field entity-field-editable" data-entity-id="${esc(entityId)}" data-field="${esc(field)}" onclick="startEntityEdit(this)">${originalValue}</div>`;
 };
 
+// ── Delete Entity ──
+
+window.deleteEntity = async function(id, btn) {
+  if (!confirm('Delete this card? This removes it from the knowledge base.')) return;
+
+  try {
+    const res = await fetch(`/api/knowledge/entities/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Delete failed: ${err.error}`);
+      return;
+    }
+
+    // Remove from local cache
+    if (knowledgeCache) {
+      for (const arr of [knowledgeCache.characters, knowledgeCache.npcs, knowledgeCache.locations]) {
+        if (!arr) continue;
+        const idx = arr.findIndex(e => e.id === id);
+        if (idx !== -1) { arr.splice(idx, 1); break; }
+      }
+    }
+
+    // Remove card from DOM
+    const card = btn.closest('.entity-card');
+    if (card) {
+      card.style.transition = 'opacity 0.3s, transform 0.3s';
+      card.style.opacity = '0';
+      card.style.transform = 'scale(0.95)';
+      setTimeout(() => card.remove(), 300);
+    }
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+  }
+};
+
+// ── Delete Portrait ──
+
+window.deletePortrait = async function(id, btn) {
+  if (!confirm('Delete this portrait? The image file will remain on disk but it won\'t be used by the pipeline.')) return;
+
+  try {
+    const res = await fetch(`/api/knowledge/portraits/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Delete failed: ${err.error}`);
+      return;
+    }
+
+    // Remove from local cache
+    if (knowledgeCache && knowledgeCache.portraits) {
+      const idx = knowledgeCache.portraits.findIndex(p => p.id === id);
+      if (idx !== -1) knowledgeCache.portraits.splice(idx, 1);
+    }
+
+    // Remove card from DOM
+    const card = btn.closest('.portrait-card');
+    if (card) {
+      card.style.transition = 'opacity 0.3s, transform 0.3s';
+      card.style.opacity = '0';
+      card.style.transform = 'scale(0.95)';
+      setTimeout(() => card.remove(), 300);
+    }
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+  }
+};
+
+// ── New Entity Form ──
+
+window.showNewEntityForm = function(defaultType, label) {
+  const container = document.getElementById('cards-content');
+  // Check if form already exists
+  if (document.getElementById('new-entity-form')) {
+    document.getElementById('new-entity-form').scrollIntoView({ behavior: 'smooth' });
+    return;
+  }
+
+  const formDiv = document.createElement('div');
+  formDiv.id = 'new-entity-form';
+  formDiv.className = 'new-entity-form';
+
+  const typeOptions = defaultType === 'pc'
+    ? '<option value="pc" selected>Player Character</option>'
+    : defaultType === 'location'
+      ? '<option value="location" selected>Location</option>'
+      : '<option value="npc" selected>NPC</option><option value="creature">Creature</option>';
+
+  const pcFields = defaultType === 'pc' ? `
+    <div class="form-row">
+      <label>Race</label>
+      <input type="text" id="new-entity-race" placeholder="e.g. Half-Elf, Tiefling, Human">
+    </div>
+    <div class="form-row">
+      <label>Class</label>
+      <input type="text" id="new-entity-class" placeholder="e.g. Fighter/Rogue, Wizard">
+    </div>
+  ` : '';
+
+  formDiv.innerHTML = `
+    <h3>New ${esc(label)}</h3>
+    <div class="form-row">
+      <label>Name *</label>
+      <input type="text" id="new-entity-name" placeholder="Name" autofocus>
+    </div>
+    <div class="form-row">
+      <label>Type</label>
+      <select id="new-entity-type">${typeOptions}</select>
+    </div>
+    ${pcFields}
+    <div class="form-row">
+      <label>Color</label>
+      <input type="color" id="new-entity-color" value="#e8a033">
+    </div>
+    <div class="form-row">
+      <label>Visual Description</label>
+      <textarea id="new-entity-desc" class="sb-textarea" rows="3" placeholder="What does this ${label.toLowerCase()} look like?"></textarea>
+    </div>
+    <div class="form-row">
+      <label>Tags</label>
+      <input type="text" id="new-entity-tags" placeholder="Comma-separated, e.g. player, magic, boss">
+    </div>
+    <div class="entity-edit-actions" style="margin-top:12px">
+      <button class="btn-small" onclick="submitNewEntity()">Create</button>
+      <button class="btn-small" onclick="document.getElementById('new-entity-form').remove()">Cancel</button>
+    </div>
+  `;
+
+  // Insert at the top of the container (after the action bar)
+  const actionBar = container.querySelector('.cards-action-bar');
+  if (actionBar) {
+    actionBar.after(formDiv);
+  } else {
+    container.prepend(formDiv);
+  }
+
+  document.getElementById('new-entity-name').focus();
+};
+
+window.submitNewEntity = async function() {
+  const name = document.getElementById('new-entity-name')?.value?.trim();
+  const type = document.getElementById('new-entity-type')?.value;
+  const color = document.getElementById('new-entity-color')?.value;
+  const visualDescription = document.getElementById('new-entity-desc')?.value?.trim();
+  const tagsStr = document.getElementById('new-entity-tags')?.value?.trim();
+  const race = document.getElementById('new-entity-race')?.value?.trim();
+  const cls = document.getElementById('new-entity-class')?.value?.trim();
+
+  if (!name) { alert('Name is required'); return; }
+
+  const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+  const body = { name, type, color, visualDescription, tags };
+  if (race) body.race = race;
+  if (cls) body.class = cls;
+
+  try {
+    const res = await fetch('/api/knowledge/entities', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Create failed: ${err.error}`);
+      return;
+    }
+
+    const entity = await res.json();
+
+    // Add to local cache
+    if (knowledgeCache) {
+      if (type === 'pc') knowledgeCache.characters.push(entity);
+      else if (type === 'npc' || type === 'creature') knowledgeCache.npcs.push(entity);
+      else if (type === 'location') knowledgeCache.locations.push(entity);
+    }
+
+    // Re-render the section
+    document.getElementById('new-entity-form')?.remove();
+    renderCardsSection(activeCardsSection);
+  } catch (err) {
+    alert(`Create failed: ${err.message}`);
+  }
+};
+
 // ── Portrait Gallery ──
 
 function renderPortraitGallery(container) {
@@ -1980,6 +2176,7 @@ function renderPortraitGallery(container) {
 
       const imgSrc = p.imagePath ? `/${p.imagePath}` : `/data/portraits/${p.filename || p.id + '.png'}`;
       card.innerHTML = `
+        <button class="btn-portrait-delete" onclick="deletePortrait('${p.id}', this)" title="Delete portrait">×</button>
         <img src="${imgSrc}" alt="${esc(entityName)}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%2312121a%22 width=%221%22 height=%221%22/></svg>'">
         <div class="portrait-card-info">${p.sessionId || p.mood || ''}</div>
         <div class="portrait-rating">

@@ -538,6 +538,94 @@ app.patch('/api/knowledge/characters/:id', (req, res) => {
   }
 });
 
+// Create a new entity (character, NPC, or location)
+app.post('/api/knowledge/entities', (req, res) => {
+  try {
+    const kb = loadKnowledge();
+    const { name, type, visualDescription, race, class: cls, color, tags } = req.body;
+
+    if (!name || !type) {
+      return res.status(400).json({ error: 'name and type are required' });
+    }
+
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40);
+
+    const entity = {
+      id,
+      name,
+      type,
+      visualDescription: visualDescription || '',
+      referenceImages: [],
+      firstSeen: null,
+      tags: tags || [],
+    };
+
+    if (color) entity.color = color;
+
+    if (type === 'pc') {
+      entity.race = race || '';
+      entity.class = cls || '';
+      entity.conditionalFeatures = {};
+      entity.signatureItems = [];
+      entity.keyAbilities = [];
+      entity.tokenImagePath = null;
+      kb.characters.push(entity);
+    } else if (type === 'npc' || type === 'creature') {
+      kb.npcs.push(entity);
+    } else if (type === 'location') {
+      kb.locations.push(entity);
+    } else {
+      return res.status(400).json({ error: `Unknown type: ${type}. Use pc, npc, creature, or location.` });
+    }
+
+    saveKnowledge(kb);
+    res.json(entity);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete an entity (character, NPC, or location)
+app.delete('/api/knowledge/entities/:id', (req, res) => {
+  try {
+    const kb = loadKnowledge();
+    const id = req.params.id;
+
+    // Search all arrays
+    let found = false;
+    for (const arr of [kb.characters, kb.npcs, kb.locations]) {
+      const idx = arr.findIndex(e => e.id === id);
+      if (idx !== -1) {
+        arr.splice(idx, 1);
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) return res.status(404).json({ error: 'Entity not found' });
+
+    saveKnowledge(kb);
+    res.json({ message: 'Entity deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a portrait
+app.delete('/api/knowledge/portraits/:id', (req, res) => {
+  try {
+    const kb = loadKnowledge();
+    const idx = kb.portraits.findIndex(p => p.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Portrait not found' });
+
+    kb.portraits.splice(idx, 1);
+    saveKnowledge(kb);
+    res.json({ message: 'Portrait deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Hide session (remove from in-memory list, files preserved on disk)
 app.delete('/api/sessions/:id', (req, res) => {
   const session = getSession(req.params.id);
