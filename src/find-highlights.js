@@ -162,9 +162,11 @@ async function callClaudeWithRetry(apiKey, model, systemPrompt, userMessage, max
           console.log(`  Salvaged ${salvaged.length} highlights from truncated response`);
           return salvaged;
         }
-        console.error('Failed to parse Claude response as JSON:');
-        console.error(responseText.substring(0, 500));
-        throw new Error(`Claude returned non-JSON response: ${e.message}`);
+        // Graceful fallback: if Claude returned prose instead of JSON (e.g. for
+        // very small chunks or wrap-up sections), log and return empty instead of crashing
+        console.warn(`  Claude returned non-JSON response: ${e.message}`);
+        console.warn(`  Response preview: ${responseText.substring(0, 200)}`);
+        return [];
       }
     } catch (err) {
       // Check for rate limit error (429)
@@ -272,11 +274,35 @@ function chunkCueLines(cueLines, maxChars) {
 
     // Overlap: go back ~10% of the chunk so moments at boundaries aren't missed
     const overlap = Math.floor((endIdx - startIdx) * 0.1);
-    startIdx = endIdx - overlap;
+    const nextStart = endIdx - overlap;
 
-    // But don't go backwards
-    if (startIdx <= chunks[chunks.length - 1]?.startId) {
-      startIdx = endIdx;
+    // Anti-regression: ensure we always advance past the previous chunk's start
+    if (nextStart <= startIdx) {
+      startIdx = endIdx; // No overlap possible, just advance
+    } else {
+      startIdx = nextStart;
+    }
+  }
+
+  // Merge tiny final chunks (< 20 cues) into the previous chunk.
+  // Very small chunks (wrap-up, goodbyes) cause Claude to return prose instead of JSON.
+  // Only merge if the combined size doesn't exceed maxChars (avoid API token limit errors).
+  const MIN_CHUNK_CUES = 20;
+  if (chunks.length > 1) {
+    const lastChunk = chunks[chunks.length - 1];
+    const lastCueCount = lastChunk.text.split('\n').filter(l => l.match(/^\[\d+\]/)).length;
+    if (lastCueCount < MIN_CHUNK_CUES) {
+      const prev = chunks[chunks.length - 2];
+      const mergedSize = prev.text.length + 1 + lastChunk.text.length;
+      if (mergedSize <= maxChars * 1.15) {
+        // Safe to merge — within ~15% of the limit (small overrun is OK)
+        prev.text = prev.text + '\n' + lastChunk.text;
+        prev.endId = lastChunk.endId;
+        chunks.pop();
+        console.log(`  Merged tiny final chunk (${lastCueCount} cues) into chunk ${chunks.length}`);
+      } else {
+        console.log(`  Tiny final chunk (${lastCueCount} cues) too large to merge safely (${mergedSize} chars > ${maxChars}), keeping separate`);
+      }
     }
   }
 

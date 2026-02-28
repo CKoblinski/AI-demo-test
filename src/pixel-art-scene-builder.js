@@ -580,12 +580,19 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
     result.totalCost += seqResult.cost || 0;
     result.assets.push(...(seqResult.assets || []));
 
+    if (seqResult._qaFailed) {
+      console.log(`  ⚠ Sequence ${i + 1} (${seq.type}${seq.speaker ? ` — ${seq.speaker}` : ''}): QA FAILED — will be skipped in final output`);
+      console.log(`    Reason: ${seqResult._qaReason || 'Unknown'}`);
+    }
+
     progress('sequence', {
-      status: 'complete',
+      status: seqResult._qaFailed ? 'qa_failed' : 'complete',
       sequenceIndex: i,
       totalSequences: sequences.length,
       type: seq.type,
       cost: seqResult.cost,
+      qaFailed: seqResult._qaFailed || false,
+      qaReason: seqResult._qaReason || null,
     });
 
     if (isCancelled()) throw new Error('Generation cancelled');
@@ -598,6 +605,12 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
   for (let i = 0; i < result.sequences.length; i++) {
     const seqResult = result.sequences[i];
     const seq = sequences[i];
+
+    // Skip QA-failed sequences from assembly
+    if (seqResult._qaFailed) {
+      console.log(`  Skipping assembly for seq ${i + 1} (${seq.type}): QA failed`);
+      continue;
+    }
 
     if ((seq.type === 'dialogue' || seq.type === 'dm_description' || seq.type === 'reaction') && seqResult.assemblyData) {
       const html = assembleAnimatedDialogueScene(seqResult.assemblyData);
@@ -631,23 +644,41 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
 
   progress('assembly', { status: 'assembling', detail: 'Building sequence player' });
 
-  // Build SEQUENCES_JSON for the sequence-player.html template
-  const playerSequences = result.sequences.map((seqResult) => seqResult.playerData);
+  // Build SEQUENCES_JSON for the sequence-player.html template (skip QA-failed sequences)
+  const playerSequences = result.sequences
+    .filter((seqResult) => !seqResult._qaFailed && seqResult.playerData)
+    .map((seqResult) => seqResult.playerData);
 
-  const totalDurationMs = sequences.reduce((sum, seq) => sum + (seq.durationSec * 1000), 0);
+  const passedCount = playerSequences.length;
+  const failedCount = result.sequences.filter(s => s._qaFailed).length;
+  if (failedCount > 0) {
+    console.log(`\n  QA Summary: ${passedCount} sequences passed, ${failedCount} skipped`);
+  }
 
-  const playerHtml = assembleSequencePlayerScene({
-    sequences: playerSequences,
-    totalDurationMs,
-    sceneTitle,
-  });
+  if (playerSequences.length === 0) {
+    console.error(`\n  ⚠ ALL ${failedCount} sequences failed QA — no output to assemble`);
+    result.playerHtml = null;
+    progress('assembly', { status: 'failed', detail: 'All sequences failed QA' });
+  } else {
+    // Only count passed sequences for total duration
+    const totalDurationMs = sequences.reduce((sum, seq, idx) => {
+      if (result.sequences[idx]?._qaFailed) return sum;
+      return sum + (seq.durationSec * 1000);
+    }, 0);
 
-  const playerPath = join(outDir, 'sequence-player.html');
-  writeFileSync(playerPath, playerHtml);
-  result.playerHtml = playerPath;
-  result.assets.push(playerPath);
+    const playerHtml = assembleSequencePlayerScene({
+      sequences: playerSequences,
+      totalDurationMs,
+      sceneTitle,
+    });
 
-  progress('assembly', { status: 'complete', sizeKB: Math.round(playerHtml.length / 1024) });
+    const playerPath = join(outDir, 'sequence-player.html');
+    writeFileSync(playerPath, playerHtml);
+    result.playerHtml = playerPath;
+    result.assets.push(playerPath);
+
+    progress('assembly', { status: 'complete', sizeKB: Math.round(playerHtml.length / 1024) });
+  }
 
   if (isCancelled()) throw new Error('Generation cancelled');
 
@@ -662,6 +693,12 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
   for (let i = 0; i < result.sequences.length; i++) {
     const seqResult = result.sequences[i];
     const seq = sequences[i];
+
+    if (seqResult._qaFailed) {
+      console.log(`  Skipping export for sequence ${i + 1} (QA failed)`);
+      result.sequenceExports.push({ index: i, type: seq.type, speaker: seq.speaker, mp4: null, qaFailed: true });
+      continue;
+    }
 
     if (!seqResult.html) {
       console.log(`  Skipping export for sequence ${i + 1} (no HTML)`);
@@ -914,9 +951,9 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
       savedPortrait = findBestPortrait(entityId);
     } catch (e) { /* non-fatal */ }
 
-    if (savedPortrait && !isDM) {
+    if (savedPortrait) {
       // Use saved portrait as reference anchor for visual consistency
-      console.log(`  Reusing saved portrait as reference for ${rawSpeaker}`);
+      console.log(`  Reusing saved portrait as reference for ${isDM ? 'narrator' : rawSpeaker}`);
       portrait = await generateExpressionVariant(
         savedPortrait.buffer,
         savedPortrait.mimeType,
@@ -1018,8 +1055,11 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
         console.log(`  Portrait QC: Retry complete`);
         progress('asset', { sequenceIndex: seqIndex, asset: 'portraitQC', status: 'complete', retried: true });
       } catch (regenErr) {
-        console.warn(`  Portrait QC: Retry failed (${regenErr.message}), using original`);
-        progress('asset', { sequenceIndex: seqIndex, asset: 'portraitQC', status: 'complete', retried: false, error: regenErr.message });
+        console.warn(`  Portrait QC: Retry failed (${regenErr.message}) — SKIPPING sequence from final output`);
+        progress('asset', { sequenceIndex: seqIndex, asset: 'portraitQC', status: 'failed', retried: true, error: regenErr.message });
+        result._qaFailed = true;
+        result._qaReason = `Portrait QC failed after retry: ${regenErr.message}`;
+        return result;
       }
     }
 
@@ -1157,7 +1197,7 @@ async function generateActionSequence(seq, seqDir, styleRef, opts) {
     playerData: null,
   };
 
-  const frameCount = Math.max(2, Math.min(5, seq.frameCount || 3));
+  const frameCount = Math.max(2, Math.min(10, seq.frameCount || 3));
 
   progress('asset', {
     sequenceIndex: seqIndex, asset: 'actionFrames', status: 'generating',
@@ -1231,15 +1271,58 @@ async function generateActionSequence(seq, seqDir, styleRef, opts) {
         }
       }
 
+      // ── Second QC pass after regeneration ──
+      if (regenCount > 0) {
+        console.log(`  Visual QC: Re-checking after ${regenCount} regen(s)...`);
+        await sleep(5000); // Short pause before QC call
+        const qcResult2 = await checkVisualCoherence(
+          frames,
+          'action_closeup',
+          seq.actionDescription || 'action sequence'
+        );
+
+        if (!qcResult2.coherent && qcResult2.problematicFrames.length > 0) {
+          const badCount = qcResult2.problematicFrames.length;
+          const totalCount = frames.length;
+          const badPct = badCount / totalCount;
+
+          if (badPct > 0.5) {
+            // More than half the frames are still bad — skip the entire sequence
+            console.warn(`  Visual QC: ${badCount}/${totalCount} frames still bad (${Math.round(badPct * 100)}%) — SKIPPING sequence from final output`);
+            result._qaFailed = true;
+            result._qaReason = `Action frame QC: ${badCount}/${totalCount} frames still broken after retry`;
+            progress('asset', { sequenceIndex: seqIndex, asset: 'visualQC', status: 'failed', regenCount, badFrames: badCount });
+            return result;
+          } else {
+            // Cut the bad frames, keep the good ones
+            const goodFrames = frames.filter((_, idx) => !qcResult2.problematicFrames.includes(idx + 1));
+            console.log(`  Visual QC: Cutting ${badCount} bad frames, keeping ${goodFrames.length}/${totalCount}`);
+            frames.length = 0;
+            frames.push(...goodFrames);
+          }
+        }
+      }
+
       progress('asset', { sequenceIndex: seqIndex, asset: 'visualQC', status: 'complete', regenCount });
     } else {
       progress('asset', { sequenceIndex: seqIndex, asset: 'visualQC', status: 'complete', regenCount: 0 });
     }
   }
 
-  // Calculate frame timing for bounce mode
+  // If QA already failed, return early
+  if (result._qaFailed) return result;
+
+  // Need at least 2 frames for a bounce animation
+  if (frames.length < 2) {
+    console.warn(`  Only ${frames.length} frame(s) remaining after QA — SKIPPING sequence`);
+    result._qaFailed = true;
+    result._qaReason = `Only ${frames.length} frame(s) remaining after cutting bad frames`;
+    return result;
+  }
+
+  // Calculate frame timing for bounce mode (use actual frames.length, not planned frameCount — QA may have cut some)
   // Bounce sequence: 0,1,2,1,0,1,2,1,... → period = 2*N-2 frames
-  const bounceSteps = Math.max(1, 2 * frameCount - 2);
+  const bounceSteps = Math.max(1, 2 * frames.length - 2);
   // Target 2-3 full bounce cycles within the sequence duration
   const targetCycles = 2.5;
   const frameDurationMs = Math.round((seq.durationSec * 1000) / (bounceSteps * targetCycles));
@@ -1484,13 +1567,39 @@ async function generateDMDescriptionSequence(seq, seqDir, characterCache, styleR
     progress('asset', { sequenceIndex: seqIndex, asset: 'portrait', status: 'generating', speaker });
 
     const narratorDesc = 'Hooded mysterious sage storyteller, face partially obscured by deep hood, warm wise eyes visible in shadow, dark flowing robes, aged hands. Fantasy RPG dungeon master narrator character. Warm candlelight from below illuminating chin and lower face.';
-    portrait = await generateCharacterPortrait(
-      speaker,
-      narratorDesc,
-      { savePath: join(assetsDir, 'portrait.png') }
-    );
+
+    // Check for saved narrator portrait for cross-session consistency
+    let savedNarrator = null;
+    try { savedNarrator = findBestPortrait('narrator'); } catch (e) { /* non-fatal */ }
+
+    if (savedNarrator) {
+      console.log(`  Reusing saved portrait as reference for narrator`);
+      portrait = await generateExpressionVariant(
+        savedNarrator.buffer,
+        savedNarrator.mimeType,
+        narratorDesc,
+        { savePath: join(assetsDir, 'portrait.png') }
+      );
+    } else {
+      portrait = await generateCharacterPortrait(
+        speaker,
+        narratorDesc,
+        { savePath: join(assetsDir, 'portrait.png') }
+      );
+    }
     result.cost += 0.04;
     result.assets.push(join(assetsDir, 'portrait.png'));
+
+    // Save narrator portrait for cross-session reuse
+    try {
+      addPortrait('narrator', {
+        buffer: portrait.buffer,
+        mimeType: portrait.mimeType,
+        mood: 'neutral',
+        description: narratorDesc,
+        quality: 1,
+      });
+    } catch (e) { /* non-fatal */ }
 
     progress('asset', {
       sequenceIndex: seqIndex, asset: 'portrait', status: 'complete',

@@ -8,7 +8,7 @@ import { runDirectorPipeline } from './sequence-director.js';
 import { migrateFromCharactersJson, extractEntities } from './knowledge.js';
 import { generateSessionSummary } from './session-summary.js';
 import { sanitizeStoryboardDescriptions } from './prompt-sanitizer.js';
-import { writeFileSync, mkdirSync, existsSync, readFileSync, cpSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, cpSync, readdirSync } from 'fs';
 import { join, resolve } from 'path';
 import archiver from 'archiver';
 import { createWriteStream } from 'fs';
@@ -175,7 +175,7 @@ export async function runAnalysis(sessionId) {
       session.progress = { message: 'Extracting entities from transcript...', percent: 40 };
       saveState(session);
 
-      const newEntities = await extractEntities(parsed.cues, { sessionId: session.id });
+      const newEntities = await extractEntities(parsed.cues, { sessionId: session.id, speakers: parsed.speakers });
       if (newEntities.length > 0) {
         session.extractedEntities = newEntities;
         console.log(`Extracted ${newEntities.length} new entities from transcript`);
@@ -592,8 +592,12 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
                 message: `Sequence ${data.sequenceIndex + 1}/${data.totalSequences}: ${data.type}${data.speaker ? ` (${data.speaker})` : ''}...`,
                 percent: pct,
               };
-            } else if (data.status === 'complete') {
+            } else if (data.status === 'complete' || data.status === 'qa_failed') {
               session.generation.totalCost = session.generation.sequences.reduce((s, sq) => s + (sq.cost || 0), 0);
+              if (data.qaFailed) {
+                seqInfo.status = 'qa_failed';
+                seqInfo.qaReason = data.qaReason;
+              }
             }
           } else if (step === 'asset') {
             // Per-asset progress within a sequence
@@ -631,9 +635,22 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
         },
       });
 
-      // Final state
+      // Final state — track QA failures
+      const passedSeqs = result.sequences.filter(s => !s._qaFailed).length;
+      const failedSeqs = result.sequences.filter(s => s._qaFailed).length;
+      const totalSeqs = result.sequences.length;
+
       session.generation.status = 'complete';
       session.generation.totalCost = result.totalCost;
+      session.generation.qaSummary = {
+        passed: passedSeqs,
+        failed: failedSeqs,
+        total: totalSeqs,
+        failedSequences: result.sequences
+          .map((s, idx) => s._qaFailed ? { index: idx, reason: s._qaReason } : null)
+          .filter(Boolean),
+      };
+
       const hasExports = result.sequenceExports?.some(e => e.mp4);
       session.generation.export = {
         status: hasExports ? 'complete' : 'failed',
@@ -643,7 +660,8 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
         sequenceFiles: result.sequenceExports || [],
       };
       session.stage = 'complete';
-      session.progress = { message: 'Scene complete!', percent: 100 };
+      const qaMsg = failedSeqs > 0 ? ` (${passedSeqs}/${totalSeqs} passed QA, ${failedSeqs} skipped)` : '';
+      session.progress = { message: `Scene complete!${qaMsg}`, percent: 100 };
       saveState(session);
 
     } catch (err) {
@@ -839,12 +857,38 @@ export function createSessionZip(sessionId) {
 
     archive.pipe(output);
 
-    // Add all segment folders
-    for (const seg of session.segments) {
-      if (!seg.segDir || !existsSync(seg.segDir)) continue;
-      const dirName = seg.segDir.split('/').pop();
-      archive.directory(seg.segDir, dirName);
+    // Add all legacy segment folders (ASCII pipeline)
+    if (session.segments) {
+      for (const seg of session.segments) {
+        if (!seg.segDir || !existsSync(seg.segDir)) continue;
+        const dirName = seg.segDir.split('/').pop();
+        archive.directory(seg.segDir, dirName);
+      }
     }
+
+    // Add pixel art moment_* directories (new pipeline)
+    try {
+      const outEntries = readdirSync(session.outDir, { withFileTypes: true });
+      for (const entry of outEntries) {
+        if (entry.isDirectory() && entry.name.startsWith('moment_')) {
+          const momentDir = join(session.outDir, entry.name);
+          archive.directory(momentDir, entry.name);
+          console.log(`  ZIP: Adding ${entry.name}/`);
+        }
+      }
+    } catch (e) {
+      console.warn(`  ZIP: Error scanning for moment_* dirs: ${e.message}`);
+    }
+
+    // Add top-level MP4/GIF/HTML files in outDir
+    try {
+      const outEntries = readdirSync(session.outDir, { withFileTypes: true });
+      for (const entry of outEntries) {
+        if (entry.isFile() && /\.(mp4|gif|html)$/i.test(entry.name) && entry.name !== 'package.zip') {
+          archive.file(join(session.outDir, entry.name), { name: entry.name });
+        }
+      }
+    } catch (e) { /* non-fatal */ }
 
     // Add session data
     const sessionDataDir = join(session.outDir, 'session-data');

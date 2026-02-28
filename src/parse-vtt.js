@@ -95,6 +95,10 @@ export function parseVTT(filePath) {
     const fullText = contentLines.join(' ').trim();
     if (!fullText) continue;
 
+    // Filter Zoom system messages before parsing speakers
+    const zoomSystemPattern = /^(Audio shared by|Participant entered|Participant left|Screen shared|Screen share ended)/i;
+    if (zoomSystemPattern.test(fullText)) continue;
+
     // Parse speaker from "Speaker Name: dialogue text"
     const speakerMatch = fullText.match(/^(.+?):\s+(.+)$/);
     let speaker = null;

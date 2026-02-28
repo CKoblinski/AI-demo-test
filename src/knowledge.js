@@ -365,13 +365,22 @@ export function getRelevantKnowledge(speakerNames = [], sceneContext = null) {
  */
 export async function extractEntities(cues, options = {}) {
   const kb = loadKnowledge();
+  const speakers = options.speakers || [];
+
+  // Find the DM by parsed role (set by parse-vtt.js speaker detection),
+  // not by literal name matching. The DM name is the raw Zoom display name
+  // (e.g. "Connor Koblinski"), not a generic "DM" label.
+  const dmSpeaker = speakers.find(s => s.role === 'dm');
+  const dmName = dmSpeaker?.name || null;
 
   // Collect DM/narrator lines (cap at ~2000 chars for token efficiency)
-  // Also include lines where speaker is unknown but might be DM narration
   const dmLines = cues
     .filter(c => {
       const spk = (c.speaker || '').toLowerCase();
-      return spk === 'dm' || spk === 'dungeon master' || spk === 'narrator' || spk === '';
+      // Match by actual DM speaker name OR generic labels OR auto-caption (no speaker)
+      const isDMByName = dmName && c.speaker === dmName;
+      const isDMByLabel = spk === 'dm' || spk === 'dungeon master' || spk === 'narrator';
+      return isDMByName || isDMByLabel || spk === '';
     })
     .map(c => c.text)
     .filter(t => t && t.length > 20) // Skip very short lines

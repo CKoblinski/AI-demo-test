@@ -60,7 +60,6 @@ export async function buildSceneContext({ moment, cues, sessionSummary }) {
   lines.push(`**Emotional Arc:** ${moment.emotionalArc || 'N/A'}`);
   lines.push(`**Context:** ${moment.contextForViewers || 'N/A'}`);
   lines.push('');
-  lines.push('## Transcript');
 
   // Include session summary context for proper noun translation and world info
   if (sessionSummary) {

@@ -1,7 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -18,6 +19,85 @@ if (existsSync(envPath)) {
 }
 
 const STYLE_PREFIX = 'PORTRAIT ORIENTATION (9:16 vertical aspect ratio, taller than wide), mobile phone screen format. 16-bit SNES-era pixel art with visible pixel grid, limited color palette (max 24 colors), no anti-aliasing, no smooth gradients, crisp hard-edged pixels. Style of Octopath Traveler, Final Fantasy VI, Chrono Trigger. Hand-pixeled aesthetic, NOT AI-generated looking, NOT anime, NOT smooth digital art. Chunky defined pixels, dithering for shading, retro RPG game sprite style. IMPORTANT: Do NOT include any text, words, letters, numbers, labels, titles, UI elements, health bars, or watermarks in the image — pure artwork only. ';
+
+// Closing reinforcement — appended AFTER the description to sandwich the style instruction
+const STYLE_SUFFIX = ' CRITICAL STYLE REMINDER: This MUST be 16-bit SNES-era pixel art with visible chunky pixels, dithered shading, limited palette (max 24 colors). NOT anime, NOT smooth digital art, NOT realistic. Think Octopath Traveler / Final Fantasy VI sprite work. Visible pixel grid is mandatory.';
+
+// Pixel Snapper — post-processor that enforces pixel grid alignment + palette quantization
+const PIXEL_SNAPPER_BIN = join(__dirname, '..', 'tools', 'pixel-snapper', 'target', 'release', 'spritefusion-pixel-snapper');
+let _pixelSnapperAvailable = null;
+
+/**
+ * Check if Pixel Snapper binary is available (cached after first check).
+ */
+function isPixelSnapperAvailable() {
+  if (_pixelSnapperAvailable !== null) return _pixelSnapperAvailable;
+  _pixelSnapperAvailable = existsSync(PIXEL_SNAPPER_BIN);
+  if (!_pixelSnapperAvailable) {
+    console.warn('  Pixel Snapper: Not installed (expected at tools/pixel-snapper/). Skipping post-processing.');
+    console.warn('  To install: cd tools/pixel-snapper && cargo build --release');
+  } else {
+    console.log('  Pixel Snapper: Available ✓');
+  }
+  return _pixelSnapperAvailable;
+}
+
+/**
+ * Post-process a generated image through Pixel Snapper.
+ * Enforces pixel grid alignment and quantizes to a strict palette.
+ * Non-fatal: if snapper fails, returns the original buffer.
+ *
+ * @param {Buffer} imageBuffer - Source PNG buffer
+ * @param {number} [colors=24] - Max colors for palette quantization
+ * @returns {Buffer} Processed PNG buffer (or original on failure)
+ */
+function snapToPixelArt(imageBuffer, colors = 24) {
+  if (!isPixelSnapperAvailable()) return imageBuffer;
+
+  // Write to temp file, process, read back
+  const tmpInput = join(__dirname, '..', `.tmp_snap_in_${Date.now()}.png`);
+  const tmpOutput = join(__dirname, '..', `.tmp_snap_out_${Date.now()}.png`);
+
+  try {
+    writeFileSync(tmpInput, imageBuffer);
+
+    execFileSync(PIXEL_SNAPPER_BIN, [tmpInput, tmpOutput, String(colors)], {
+      timeout: 15000,
+      stdio: 'pipe',
+    });
+
+    if (existsSync(tmpOutput)) {
+      const snapped = readFileSync(tmpOutput);
+      const origKB = Math.round(imageBuffer.length / 1024);
+      const snapKB = Math.round(snapped.length / 1024);
+      console.log(`  Pixel Snapper: ${origKB}KB → ${snapKB}KB (${colors} colors)`);
+      return snapped;
+    } else {
+      console.warn('  Pixel Snapper: No output file produced, using original');
+      return imageBuffer;
+    }
+  } catch (err) {
+    console.warn(`  Pixel Snapper: Error (${err.message?.substring(0, 100)}), using original`);
+    return imageBuffer;
+  } finally {
+    // Cleanup temp files
+    try { if (existsSync(tmpInput)) unlinkSync(tmpInput); } catch (_) {}
+    try { if (existsSync(tmpOutput)) unlinkSync(tmpOutput); } catch (_) {}
+  }
+}
+
+/**
+ * Truncate a description to maxLen at the last sentence boundary.
+ * Prevents prompt bloat from diluting style instructions.
+ */
+function capDescription(text, maxLen) {
+  if (!text || text.length <= maxLen) return text;
+  const cut = text.substring(0, maxLen);
+  const lastPeriod = cut.lastIndexOf('.');
+  const lastComma = cut.lastIndexOf(',');
+  const boundary = Math.max(lastPeriod, lastComma);
+  return boundary > maxLen * 0.5 ? cut.substring(0, boundary + 1) : cut;
+}
 
 /**
  * Read PNG width and height from the IHDR chunk.
@@ -50,7 +130,7 @@ function getClient() {
  */
 export async function generatePixelArt(prompt, options = {}) {
   const ai = getClient();
-  const fullPrompt = STYLE_PREFIX + prompt;
+  const fullPrompt = STYLE_PREFIX + prompt + STYLE_SUFFIX;
 
   console.log(`  Generating image: ${prompt.substring(0, 80)}...`);
   const startTime = Date.now();
@@ -132,6 +212,15 @@ export async function generatePixelArt(prompt, options = {}) {
     }
   }
 
+  // ── Post-process through Pixel Snapper (grid alignment + palette quantization) ──
+  if (!options.skipPixelSnap) {
+    const snapped = snapToPixelArt(buffer);
+    if (snapped !== buffer) {
+      buffer = snapped;
+      base64 = buffer.toString('base64');
+    }
+  }
+
   let savedPath = null;
   if (options.savePath) {
     mkdirSync(dirname(options.savePath), { recursive: true });
@@ -158,7 +247,7 @@ export async function generateCharacterPortrait(name, description, options = {})
   if (options.referenceImage) {
     // Reference-based generation: use saved portrait as style anchor
     const ai = getClient();
-    const prompt = STYLE_PREFIX + `This is a reference portrait. Create a NEW portrait of the same character in the same pixel art style. The character should look like themselves (same face, hair, clothing) but with the expression and emotion matching this description: ${description}. close-up face portrait, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box.`;
+    const prompt = STYLE_PREFIX + `This is a reference portrait. Create a NEW portrait of the same character in the same pixel art style. The character should look like themselves (same face, hair, clothing) but with the expression and emotion matching this description: ${description}. close-up face portrait, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box.` + STYLE_SUFFIX;
 
     console.log(`  Generating portrait (with reference): ${description.substring(0, 80)}...`);
     const startTime = Date.now();
@@ -195,11 +284,15 @@ export async function generateCharacterPortrait(name, description, options = {})
       console.warn('  Reference-based portrait failed, falling back to fresh generation');
       // Fall through to normal generation
     } else {
-      const base64 = imagePart.inlineData.data;
+      let base64 = imagePart.inlineData.data;
       const mimeType = imagePart.inlineData.mimeType || 'image/png';
-      const buffer = Buffer.from(base64, 'base64');
+      let buffer = Buffer.from(base64, 'base64');
 
       console.log(`  Generated portrait (ref-based, ${durationMs}ms, ${Math.round(buffer.length / 1024)}KB)`);
+
+      // Pixel Snapper post-processing
+      const snapped = snapToPixelArt(buffer);
+      if (snapped !== buffer) { buffer = snapped; base64 = buffer.toString('base64'); }
 
       let savedPath = null;
       if (options.savePath) {
@@ -212,8 +305,9 @@ export async function generateCharacterPortrait(name, description, options = {})
     }
   }
 
-  // Standard generation (no reference)
-  const prompt = `close-up face portrait of ${description}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic`;
+  // Standard generation (no reference) — cap description to prevent prompt bloat
+  const cappedDesc = capDescription(description, 200);
+  const prompt = `close-up face portrait of ${cappedDesc}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic`;
   return generatePixelArt(prompt, { ...options, skipOrientationCheck: true });
 }
 
@@ -268,7 +362,7 @@ export async function generateMouthVariants(basePortraitBuffer, baseMimeType = '
             {
               parts: [
                 { inlineData: { data: baseBase64, mimeType: baseMimeType } },
-                { text: STYLE_PREFIX + `This is a character portrait. Create the EXACT same character portrait with the EXACT same art style, clothing, hair, eyes, lighting, and background. The ONLY change: ${expr.instruction}` },
+                { text: STYLE_PREFIX + `This is a character portrait. Create the EXACT same character portrait with the EXACT same art style, clothing, hair, eyes, lighting, and background. The ONLY change: ${expr.instruction}` + STYLE_SUFFIX },
               ],
             },
           ],
@@ -300,9 +394,13 @@ export async function generateMouthVariants(basePortraitBuffer, baseMimeType = '
       continue;
     }
 
-    const varBase64 = imagePart.inlineData.data;
+    let varBase64 = imagePart.inlineData.data;
     const varMime = imagePart.inlineData.mimeType || 'image/png';
-    const varBuffer = Buffer.from(varBase64, 'base64');
+    let varBuffer = Buffer.from(varBase64, 'base64');
+
+    // Pixel Snapper post-processing
+    const snappedVar = snapToPixelArt(varBuffer);
+    if (snappedVar !== varBuffer) { varBuffer = snappedVar; varBase64 = varBuffer.toString('base64'); }
 
     console.log(`  Generated variant: ${expr.label} (${durationMs}ms, ${(varBuffer.length / 1024).toFixed(0)}KB)`);
 
@@ -351,7 +449,7 @@ export async function generateExpressionVariant(basePortraitBuffer, baseMimeType
           {
             parts: [
               { inlineData: { data: baseBase64, mimeType: baseMimeType } },
-              { text: STYLE_PREFIX + `This is a character portrait. Create the EXACT same character with the EXACT same art style, clothing, hair color, and background. Change the facial expression and emotion to match this description: ${expressionDesc}. Keep everything else about the character identical.` },
+              { text: STYLE_PREFIX + `This is a character portrait. Create the EXACT same character with the EXACT same art style, clothing, hair color, and background. Change the facial expression and emotion to match this description: ${expressionDesc}. Keep everything else about the character identical.` + STYLE_SUFFIX },
             ],
           },
         ],
@@ -388,6 +486,10 @@ export async function generateExpressionVariant(basePortraitBuffer, baseMimeType
     console.warn('  Expression variant generation returned no image — falling back to base portrait');
     return { buffer: basePortraitBuffer, base64: baseBase64, mimeType: baseMimeType, path: options.savePath, durationMs };
   }
+
+  // Pixel Snapper post-processing
+  const snappedExpr = snapToPixelArt(varBuffer);
+  if (snappedExpr !== varBuffer) { varBuffer = snappedExpr; varBase64 = varBuffer.toString('base64'); }
 
   const sizeKB = Math.round(varBuffer.length / 1024);
   console.log(`  Expression variant: ${sizeKB}KB (${durationMs}ms)`);
@@ -432,12 +534,13 @@ export async function generateActionFrames(description, frameCount = 5, mood = '
   const moodStr = moodModifiers[mood] || moodModifiers.neutral;
 
   const frames = [];
-  const clampedCount = Math.max(2, Math.min(7, frameCount));
+  const clampedCount = Math.max(2, Math.min(10, frameCount));
 
   // ── Frame 1: Generate base frame from prompt ──
   console.log(`  Generating action frame 1/${clampedCount}...`);
 
-  const basePrompt = `${description}, frame 1 of ${clampedCount} showing the START of the action, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, dramatic close-up, action scene`;
+  const cappedDesc = capDescription(description, 250);
+  const basePrompt = `${cappedDesc}, frame 1 of ${clampedCount} showing the START of the action, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, dramatic close-up, action scene`;
   const baseSavePath = options.saveDir ? join(options.saveDir, 'frame_01.png') : undefined;
   const baseFrame = await generatePixelArt(basePrompt, { savePath: baseSavePath });
 
@@ -469,7 +572,7 @@ export async function generateActionFrames(description, frameCount = 5, mood = '
             {
               parts: [
                 { inlineData: { data: baseFrame.base64, mimeType: baseFrame.mimeType } },
-                { text: STYLE_PREFIX + `This is frame 1 of an action sequence showing "${description}". Create frame ${i} of ${clampedCount} (the ${progressDesc} of the action). Keep the EXACT same art style, color palette, lighting, and composition. Progress the action forward — show the next stage of movement. The action should feel like a smooth animation sequence.` },
+                { text: STYLE_PREFIX + `This is frame 1 of an action sequence showing "${cappedDesc}". Create frame ${i} of ${clampedCount} (the ${progressDesc} of the action). Keep the EXACT same art style, color palette, lighting, and composition. Progress the action forward — show the next stage of movement.` + STYLE_SUFFIX },
               ],
             },
           ],
@@ -502,9 +605,13 @@ export async function generateActionFrames(description, frameCount = 5, mood = '
       continue;
     }
 
-    const varBase64 = imagePart.inlineData.data;
+    let varBase64 = imagePart.inlineData.data;
     const varMime = imagePart.inlineData.mimeType || 'image/png';
-    const varBuffer = Buffer.from(varBase64, 'base64');
+    let varBuffer = Buffer.from(varBase64, 'base64');
+
+    // Pixel Snapper post-processing
+    const snappedFrame = snapToPixelArt(varBuffer);
+    if (snappedFrame !== varBuffer) { varBuffer = snappedFrame; varBase64 = varBuffer.toString('base64'); }
 
     console.log(`  Generated frame ${i}: (${durationMs}ms, ${(varBuffer.length / 1024).toFixed(0)}KB)`);
 
@@ -685,7 +792,7 @@ export async function regenerateActionFrame(baseFrame, frameNumber, totalFrames,
             },
           },
           {
-            text: STYLE_PREFIX + `This is frame 1 of an action sequence showing "${description}". Create frame ${frameNumber} of ${totalFrames} (the ${progressDesc}). Keep the EXACT same art style, color palette, lighting, and composition. Progress the action forward — show the next stage of movement. Previous attempt had issues: ${issueHint}. Ensure visual consistency with frame 1. ${moodStr}`,
+            text: STYLE_PREFIX + `This is frame 1 of an action sequence showing "${description}". Create frame ${frameNumber} of ${totalFrames} (the ${progressDesc}). Keep the EXACT same art style, color palette, lighting, and composition. Progress the action forward — show the next stage of movement. Previous attempt had issues: ${issueHint}. Ensure visual consistency with frame 1. ${moodStr}` + STYLE_SUFFIX,
           },
         ],
       },
@@ -700,9 +807,14 @@ export async function regenerateActionFrame(baseFrame, frameNumber, totalFrames,
     throw new Error('Regeneration returned no image');
   }
 
-  const buffer = Buffer.from(imagePart.inlineData.data, 'base64');
+  let buffer = Buffer.from(imagePart.inlineData.data, 'base64');
+  let base64 = imagePart.inlineData.data;
   const durationMs = Date.now() - startTime;
   console.log(`  Regenerated frame ${frameNumber} (${durationMs}ms, ${Math.round(buffer.length / 1024)}KB)`);
+
+  // Pixel Snapper post-processing
+  const snappedRegen = snapToPixelArt(buffer);
+  if (snappedRegen !== buffer) { buffer = snappedRegen; base64 = buffer.toString('base64'); }
 
   if (options.savePath) {
     writeFileSync(options.savePath, buffer);
@@ -711,7 +823,7 @@ export async function regenerateActionFrame(baseFrame, frameNumber, totalFrames,
 
   return {
     buffer,
-    base64: imagePart.inlineData.data,
+    base64,
     mimeType: imagePart.inlineData.mimeType || 'image/png',
   };
 }
@@ -729,7 +841,8 @@ export async function generateSceneBackground(description, mood = 'neutral', opt
     comedic: 'bright colors, exaggerated details',
   };
   const moodStr = moodModifiers[mood] || moodModifiers.neutral;
-  const prompt = `${description}, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, detailed environment, RPG game background`;
+  const cappedDesc = capDescription(description, 300);
+  const prompt = `${cappedDesc}, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, detailed environment, RPG game background`;
   return generatePixelArt(prompt, options);
 }
 
@@ -860,7 +973,8 @@ export async function regenerateBackground(description, mood = 'neutral', issueH
 
   console.log(`  Regenerating background with issue feedback: "${issueHint.substring(0, 100)}..."`);
 
-  const prompt = `${description}, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, detailed environment, RPG game background. CRITICAL: Previous attempt had these issues: ${issueHint}. You MUST avoid these problems. Do NOT include any text, words, numbers, labels, or UI elements.`;
+  const cappedDesc = capDescription(description, 300);
+  const prompt = `${cappedDesc}, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, detailed environment, RPG game background. CRITICAL: Previous attempt had these issues: ${issueHint}. You MUST avoid these problems. Do NOT include any text, words, numbers, labels, or UI elements.`;
   return generatePixelArt(prompt, options);
 }
 
@@ -877,6 +991,7 @@ export async function regenerateBackground(description, mood = 'neutral', issueH
 export async function regeneratePortrait(name, description, issueHint, options = {}) {
   console.log(`  Regenerating portrait for ${name} with issue feedback: "${issueHint.substring(0, 100)}..."`);
 
-  const prompt = `close-up face portrait of ${description}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic. CRITICAL: Previous attempt had these issues: ${issueHint}. Ensure visual consistency and avoid these problems.`;
+  const cappedDesc = capDescription(description, 200);
+  const prompt = `close-up face portrait of ${cappedDesc}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic. CRITICAL: Previous attempt had these issues: ${issueHint}. Ensure visual consistency and avoid these problems.`;
   return generatePixelArt(prompt, { ...options, skipOrientationCheck: true });
 }

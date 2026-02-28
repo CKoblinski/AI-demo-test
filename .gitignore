@@ -4,3 +4,5 @@ output/
 input/
 uploads/
 .DS_Store
+tools/pixel-snapper/
+.tmp_snap_*
