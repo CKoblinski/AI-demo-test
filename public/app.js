@@ -1774,8 +1774,14 @@ function renderCardsSection(section) {
 }
 
 function filterEntities(...types) {
-  if (!knowledgeCache || !knowledgeCache.entities) return [];
-  return knowledgeCache.entities.filter(e => {
+  if (!knowledgeCache) return [];
+  // Merge all entity arrays from the knowledge base (characters, npcs, locations)
+  const all = [
+    ...(knowledgeCache.characters || []),
+    ...(knowledgeCache.npcs || []),
+    ...(knowledgeCache.locations || []),
+  ];
+  return all.filter(e => {
     const t = (e.type || '').toLowerCase();
     return types.some(tp => t.includes(tp));
   });
@@ -1803,10 +1809,13 @@ function renderEntityCards(container, entities, section) {
       tagsHtml = `<div class="entity-tags">${entity.tags.map(t => `<span class="entity-tag">${esc(t)}</span>`).join('')}</div>`;
     }
 
-    // Signature items
+    // Signature items (array of objects: { name, type, visualDescription })
     let itemsHtml = '';
     if (entity.signatureItems && entity.signatureItems.length > 0) {
-      itemsHtml = `<div class="entity-field-label">Signature Items</div><ul class="entity-items">${entity.signatureItems.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`;
+      itemsHtml = `<div class="entity-field-label">Signature Items</div><ul class="entity-items">${entity.signatureItems.map(i => {
+        if (typeof i === 'string') return `<li>${esc(i)}</li>`;
+        return `<li><strong>${esc(i.name)}</strong>${i.type ? ` <span class="entity-item-type">(${esc(i.type)})</span>` : ''} — ${esc(i.visualDescription || '')}</li>`;
+      }).join('')}</ul>`;
     }
 
     // Key abilities
@@ -1815,10 +1824,11 @@ function renderEntityCards(container, entities, section) {
       abilitiesHtml = `<div class="entity-field-label">Key Abilities</div><ul class="entity-abilities">${entity.keyAbilities.map(a => `<li>${esc(a)}</li>`).join('')}</ul>`;
     }
 
-    // Conditional features
+    // Conditional features (object: { featureName: "description" })
     let condHtml = '';
-    if (entity.conditionalFeatures && entity.conditionalFeatures.length > 0) {
-      condHtml = `<div class="entity-field-label">Conditional Features</div><div class="entity-field">${entity.conditionalFeatures.map(c => esc(c)).join('; ')}</div>`;
+    const condEntries = entity.conditionalFeatures ? Object.entries(entity.conditionalFeatures) : [];
+    if (condEntries.length > 0) {
+      condHtml = `<div class="entity-field-label">Conditional Features</div><ul class="entity-items">${condEntries.map(([key, desc]) => `<li><strong>${esc(key)}</strong> — ${esc(desc)}</li>`).join('')}</ul>`;
     }
 
     // Inline portrait thumbnail
@@ -1829,6 +1839,13 @@ function renderEntityCards(container, entities, section) {
       portraitThumb = `<img src="${thumbSrc}" class="entity-portrait-thumb" alt="${esc(entity.name)}" onerror="this.style.display='none'">`;
     }
 
+    // Race / Class subtitle
+    let subtitleHtml = '';
+    if (entity.race || entity.class) {
+      const parts = [entity.race, entity.class].filter(Boolean);
+      subtitleHtml = `<div class="entity-card-subtitle">${esc(parts.join(' · '))}</div>`;
+    }
+
     card.innerHTML = `
       <div class="entity-card-header">
         <div class="entity-color-dot" style="background:${esc(color)}"></div>
@@ -1836,6 +1853,7 @@ function renderEntityCards(container, entities, section) {
         ${portraitThumb}
         <span class="entity-card-type">${esc(entity.type || section)}</span>
       </div>
+      ${subtitleHtml}
       <div class="entity-card-body">
         ${entity.visualDescription ? `
           <div>
@@ -1904,10 +1922,13 @@ window.saveEntityEdit = async function(btn) {
       return;
     }
 
-    // Update local cache
-    if (knowledgeCache && knowledgeCache.entities) {
-      const entity = knowledgeCache.entities.find(e => e.id === entityId);
-      if (entity) entity[field] = newValue;
+    // Update local cache — search all entity arrays
+    if (knowledgeCache) {
+      const allArrays = [knowledgeCache.characters, knowledgeCache.npcs, knowledgeCache.locations].filter(Boolean);
+      for (const arr of allArrays) {
+        const entity = arr.find(e => e.id === entityId);
+        if (entity) { entity[field] = newValue; break; }
+      }
     }
 
     area.outerHTML = `<div class="entity-field entity-field-editable" data-entity-id="${esc(entityId)}" data-field="${esc(field)}" onclick="startEntityEdit(this)">${esc(newValue)}</div>`;

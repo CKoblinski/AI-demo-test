@@ -1946,6 +1946,19 @@ textarea:focus { outline: none; border-color: var(--accent); }
   letter-spacing: 0.5px;
 }
 
+.entity-card-subtitle {
+  padding: 0 12px 8px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.entity-item-type {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
 .entity-card-body {
   display: flex;
   flex-direction: column;
