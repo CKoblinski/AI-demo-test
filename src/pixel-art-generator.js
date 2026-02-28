@@ -25,6 +25,9 @@ const STYLE_SUFFIX = ' CRITICAL STYLE REMINDER: This MUST be 16-bit SNES-era pix
 
 // Pixel Snapper — post-processor that enforces pixel grid alignment + palette quantization
 const PIXEL_SNAPPER_BIN = join(__dirname, '..', 'tools', 'pixel-snapper', 'target', 'release', 'spritefusion-pixel-snapper');
+// Portraits get fewer colors → chunkier, more retro, less anime smooth shading
+const PORTRAIT_SNAP_COLORS = 16;
+const DEFAULT_SNAP_COLORS = 24;
 let _pixelSnapperAvailable = null;
 
 /**
@@ -214,7 +217,8 @@ export async function generatePixelArt(prompt, options = {}) {
 
   // ── Post-process through Pixel Snapper (grid alignment + palette quantization) ──
   if (!options.skipPixelSnap) {
-    const snapped = snapToPixelArt(buffer);
+    const colors = options.portraitSnap ? PORTRAIT_SNAP_COLORS : DEFAULT_SNAP_COLORS;
+    const snapped = snapToPixelArt(buffer, colors);
     if (snapped !== buffer) {
       buffer = snapped;
       base64 = buffer.toString('base64');
@@ -247,7 +251,7 @@ export async function generateCharacterPortrait(name, description, options = {})
   if (options.referenceImage) {
     // Reference-based generation: use saved portrait as style anchor
     const ai = getClient();
-    const prompt = STYLE_PREFIX + `This is a reference portrait. Create a NEW portrait of the same character in the same pixel art style. The character should look like themselves (same face, hair, clothing) but with the expression and emotion matching this description: ${description}. close-up face portrait, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box.` + STYLE_SUFFIX;
+    const prompt = STYLE_PREFIX + `This is a reference portrait. Create a NEW portrait of the same character in the same chunky pixel art style. The character should look like themselves (same face, hair, clothing) but with the expression and emotion matching this description: ${description}. Square composition, face fills exactly 85-90% of the frame, centered. Dark moody background. Thick visible pixel grid, blocky SNES-era RPG portrait style. NOT anime, NOT smooth — low pixel count aesthetic like a 48x48 pixel portrait scaled up.` + STYLE_SUFFIX;
 
     console.log(`  Generating portrait (with reference): ${description.substring(0, 80)}...`);
     const startTime = Date.now();
@@ -290,8 +294,8 @@ export async function generateCharacterPortrait(name, description, options = {})
 
       console.log(`  Generated portrait (ref-based, ${durationMs}ms, ${Math.round(buffer.length / 1024)}KB)`);
 
-      // Pixel Snapper post-processing
-      const snapped = snapToPixelArt(buffer);
+      // Pixel Snapper post-processing — portraits get 16 colors for chunkier look
+      const snapped = snapToPixelArt(buffer, PORTRAIT_SNAP_COLORS);
       if (snapped !== buffer) { buffer = snapped; base64 = buffer.toString('base64'); }
 
       let savedPath = null;
@@ -307,8 +311,8 @@ export async function generateCharacterPortrait(name, description, options = {})
 
   // Standard generation (no reference) — cap description to prevent prompt bloat
   const cappedDesc = capDescription(description, 200);
-  const prompt = `close-up face portrait of ${cappedDesc}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic`;
-  return generatePixelArt(prompt, { ...options, skipOrientationCheck: true });
+  const prompt = `Character portrait for RPG dialogue box: ${cappedDesc}. Square composition, face fills exactly 85-90% of the frame, centered. Dark moody background. Chunky blocky pixel art style like SNES Final Fantasy VI or Chrono Trigger character select portraits. Thick visible pixel grid, NOT anime, NOT smooth — each pixel should be clearly distinguishable as an individual square. Low pixel count aesthetic (think 48x48 pixel portrait scaled up). Dithered shading, limited palette, hard pixel edges.`;
+  return generatePixelArt(prompt, { ...options, skipOrientationCheck: true, portraitSnap: true });
 }
 
 /**
@@ -332,24 +336,19 @@ export async function generateCharacterSprite(name, description, pose = 'standin
 export async function generateMouthVariants(basePortraitBuffer, baseMimeType = 'image/png', options = {}) {
   const ai = getClient();
   const baseBase64 = basePortraitBuffer.toString('base64');
+  const baseSizeKB = Math.round(basePortraitBuffer.length / 1024);
 
   const expressions = [
-    { label: 'mouth-slightly-open', instruction: 'mouth slightly open as if speaking mid-sentence, lips parted. Everything else identical.' },
-    { label: 'mouth-open', instruction: 'mouth open wider, talking expression as if saying a vowel sound. Everything else identical.' },
+    { label: 'mouth-slightly-open', instruction: 'mouth slightly open, lips parted by 1-2 pixels. ONLY the mouth pixels change.' },
+    { label: 'mouth-open', instruction: 'mouth open wider showing teeth, 2-3 pixels of opening. ONLY the mouth pixels change.' },
   ];
 
-  const variants = [];
+  // Generate all variants in parallel — each references the base portrait independently
+  console.log(`  Generating ${expressions.length} mouth variants in parallel...`);
+  await new Promise(r => setTimeout(r, 2000)); // 2s courtesy pause before burst
 
-  for (let i = 0; i < expressions.length; i++) {
-    const expr = expressions[i];
+  const variantPromises = expressions.map(async (expr) => {
     console.log(`  Generating mouth variant: ${expr.label}...`);
-
-    // Wait between API calls
-    if (i > 0 || variants.length > 0) {
-      console.log('  Pausing 15s between API calls...');
-      await new Promise(r => setTimeout(r, 15000));
-    }
-
     const startTime = Date.now();
     let response;
     const maxRetries = 2;
@@ -362,7 +361,7 @@ export async function generateMouthVariants(basePortraitBuffer, baseMimeType = '
             {
               parts: [
                 { inlineData: { data: baseBase64, mimeType: baseMimeType } },
-                { text: STYLE_PREFIX + `This is a character portrait. Create the EXACT same character portrait with the EXACT same art style, clothing, hair, eyes, lighting, and background. The ONLY change: ${expr.instruction}` + STYLE_SUFFIX },
+                { text: `PIXEL-PERFECT COPY with ONE tiny change. Copy this image EXACTLY — same zoom level, same framing, same face position, same pixel grid, same colors, same lighting, same background, same hair, same eyes, same clothing. The character's face must fill EXACTLY the same percentage of the frame. Do NOT recompose, reframe, zoom in, zoom out, or shift the character's position AT ALL. The ONLY pixels that should differ from the input: ${expr.instruction} Every single pixel outside the mouth area must be IDENTICAL to the input image. This is a 2-frame animation — the frames must be interchangeable without any visible jump in composition.` },
               ],
             },
           ],
@@ -375,7 +374,7 @@ export async function generateMouthVariants(basePortraitBuffer, baseMimeType = '
         const details = err.message || String(err);
         console.error(`  API error: ${details.substring(0, 200)}`);
         if (attempt < maxRetries) {
-          const waitSec = 15 * attempt;
+          const waitSec = 5 * attempt;
           console.log(`  Retrying in ${waitSec}s (attempt ${attempt}/${maxRetries})...`);
           await new Promise(r => setTimeout(r, waitSec * 1000));
           continue;
@@ -391,27 +390,47 @@ export async function generateMouthVariants(basePortraitBuffer, baseMimeType = '
     if (!imagePart) {
       const textPart = parts.find(p => p.text);
       console.warn(`  Variant ${expr.label} failed: ${textPart?.text || 'No image returned'}. Skipping.`);
-      continue;
+      return null;
     }
 
     let varBase64 = imagePart.inlineData.data;
     const varMime = imagePart.inlineData.mimeType || 'image/png';
     let varBuffer = Buffer.from(varBase64, 'base64');
 
-    // Pixel Snapper post-processing
-    const snappedVar = snapToPixelArt(varBuffer);
+    // Pixel Snapper post-processing (portrait palette: 16 colors)
+    const snappedVar = snapToPixelArt(varBuffer, PORTRAIT_SNAP_COLORS);
     if (snappedVar !== varBuffer) { varBuffer = snappedVar; varBase64 = varBuffer.toString('base64'); }
 
     console.log(`  Generated variant: ${expr.label} (${durationMs}ms, ${(varBuffer.length / 1024).toFixed(0)}KB)`);
 
+    // ── Framing guard: reject variants where composition drifted drastically ──
+    const varSizeKB = Math.round(varBuffer.length / 1024);
+    const sizeDriftPct = baseSizeKB > 0 ? Math.abs(varSizeKB - baseSizeKB) / baseSizeKB * 100 : 0;
+
+    if (sizeDriftPct > 60) {
+      console.warn(`  ⚠ Framing guard: variant ${expr.label} drifted drastically (${sizeDriftPct.toFixed(0)}% size change). Using base portrait as fallback.`);
+      return { buffer: basePortraitBuffer, base64: baseBase64, mimeType: baseMimeType, label: expr.label, framingFallback: true };
+    }
+    if (sizeDriftPct > 30) {
+      console.warn(`  ⚠ Framing guard: variant ${expr.label} has moderate drift (${sizeDriftPct.toFixed(0)}%) — accepting but watch for visual jump`);
+    }
     if (options.saveDir) {
       const savePath = join(options.saveDir, `portrait-${expr.label}.png`);
       mkdirSync(options.saveDir, { recursive: true });
       writeFileSync(savePath, varBuffer);
       console.log(`  Saved: ${savePath}`);
     }
+    return { buffer: varBuffer, base64: varBase64, mimeType: varMime, label: expr.label };
+  });
 
-    variants.push({ buffer: varBuffer, base64: varBase64, mimeType: varMime, label: expr.label });
+  const results = await Promise.allSettled(variantPromises);
+  const variants = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) {
+      variants.push(r.value);
+    } else if (r.status === 'rejected') {
+      console.warn(`  Mouth variant failed: ${r.reason?.message}`);
+    }
   }
 
   return variants;
@@ -434,8 +453,8 @@ export async function generateExpressionVariant(basePortraitBuffer, baseMimeType
   const baseBase64 = basePortraitBuffer.toString('base64');
 
   console.log(`  Generating expression variant: "${expressionDesc.substring(0, 80)}..."`);
-  console.log('  Pausing 15s between API calls...');
-  await new Promise(r => setTimeout(r, 15000));
+  console.log('  Pausing 2s between API calls...');
+  await new Promise(r => setTimeout(r, 2000));
 
   const startTime = Date.now();
   let response;
@@ -449,7 +468,7 @@ export async function generateExpressionVariant(basePortraitBuffer, baseMimeType
           {
             parts: [
               { inlineData: { data: baseBase64, mimeType: baseMimeType } },
-              { text: STYLE_PREFIX + `This is a character portrait. Create the EXACT same character with the EXACT same art style, clothing, hair color, and background. Change the facial expression and emotion to match this description: ${expressionDesc}. Keep everything else about the character identical.` + STYLE_SUFFIX },
+              { text: STYLE_PREFIX + `This is a character portrait. Create the EXACT same character with the EXACT same art style, clothing, hair color, background, zoom level, and framing. The face must fill EXACTLY the same percentage of the frame — do NOT recompose or reframe. Change only the facial expression and emotion to match: ${expressionDesc}. Maintain identical pixel grid, composition, and face position.` + STYLE_SUFFIX },
             ],
           },
         ],
@@ -487,8 +506,8 @@ export async function generateExpressionVariant(basePortraitBuffer, baseMimeType
     return { buffer: basePortraitBuffer, base64: baseBase64, mimeType: baseMimeType, path: options.savePath, durationMs };
   }
 
-  // Pixel Snapper post-processing
-  const snappedExpr = snapToPixelArt(varBuffer);
+  // Pixel Snapper post-processing — portraits get 16 colors for chunkier look
+  const snappedExpr = snapToPixelArt(varBuffer, PORTRAIT_SNAP_COLORS);
   if (snappedExpr !== varBuffer) { varBuffer = snappedExpr; varBase64 = varBuffer.toString('base64'); }
 
   const sizeKB = Math.round(varBuffer.length / 1024);
@@ -551,18 +570,31 @@ export async function generateActionFrames(description, frameCount = 5, mood = '
     label: 'frame_01',
   });
 
-  // ── Frames 2-N: Reference-based variants showing action progression ──
+  // ── Frames 2-N: Chained dual-image reference (frame 1 = style anchor, frame N-1 = continuity) ──
   for (let i = 2; i <= clampedCount; i++) {
-    // Rate limit pause
-    console.log('  Pausing 15s between API calls...');
-    await new Promise(r => setTimeout(r, 15000));
+    // Courtesy pause between sequential Gemini calls
+    console.log('  Pausing 2s between API calls...');
+    await new Promise(r => setTimeout(r, 2000));
 
-    const progressDesc = i === clampedCount ? 'PEAK/CLIMAX' : 'MIDDLE progression';
-    console.log(`  Generating action frame ${i}/${clampedCount} (${progressDesc})...`);
+    const progressDesc = i === clampedCount ? 'final moment' : `step ${i - 1} of ${clampedCount - 1}`;
+    const prevFrame = frames[frames.length - 1]; // chain: reference the PREVIOUS frame for continuity
+    console.log(`  Generating action frame ${i}/${clampedCount} (${progressDesc}, chained from frame ${i - 1})...`);
 
     const startTime = Date.now();
     let response;
     const maxRetries = 2;
+
+    // Build dual-image reference: frame 1 (style) + previous frame (continuity)
+    const contentParts = [
+      { inlineData: { data: baseFrame.base64, mimeType: baseFrame.mimeType } },
+    ];
+    // For frame 2, previous IS frame 1, so skip duplicate image
+    if (i > 2) {
+      contentParts.push({ inlineData: { data: prevFrame.base64, mimeType: prevFrame.mimeType || 'image/png' } });
+    }
+    const refText = i > 2
+      ? `Image 1 is the STARTING frame (style/palette reference). Image 2 is the CURRENT frame (where the action is now). Create the next small step forward in the action sequence. Change only what needs to move — keep the same zoom, composition, color palette, and art style. This is frame ${i} of ${clampedCount} showing "${cappedDesc}". Make a SMALL incremental change from Image 2, not a dramatic leap.`
+      : `This is frame 1 of an action sequence showing "${cappedDesc}". Create frame 2 — the next small step in the action. Keep the EXACT same art style, color palette, lighting, composition, and zoom. Make a SMALL incremental change, not a dramatic leap.`;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -571,8 +603,8 @@ export async function generateActionFrames(description, frameCount = 5, mood = '
           contents: [
             {
               parts: [
-                { inlineData: { data: baseFrame.base64, mimeType: baseFrame.mimeType } },
-                { text: STYLE_PREFIX + `This is frame 1 of an action sequence showing "${cappedDesc}". Create frame ${i} of ${clampedCount} (the ${progressDesc} of the action). Keep the EXACT same art style, color palette, lighting, and composition. Progress the action forward — show the next stage of movement.` + STYLE_SUFFIX },
+                ...contentParts,
+                { text: STYLE_PREFIX + refText + STYLE_SUFFIX },
               ],
             },
           ],
@@ -585,7 +617,7 @@ export async function generateActionFrames(description, frameCount = 5, mood = '
         const details = err.message || String(err);
         console.error(`  API error: ${details.substring(0, 200)}`);
         if (attempt < maxRetries) {
-          const waitSec = 15 * attempt;
+          const waitSec = 5 * attempt;
           console.log(`  Retrying in ${waitSec}s...`);
           await new Promise(r => setTimeout(r, waitSec * 1000));
           continue;
@@ -683,7 +715,7 @@ Return ONLY a JSON object:
   "problematicFrames": [frame numbers (1-indexed) that have problems, empty if none]
 }`;
   } else {
-    // dialogue / reaction — check portrait consistency with mouth variants
+    // dialogue / reaction — check portrait consistency with mouth variants + framing
     analysisPrompt = `These ${frames.length} pixel art portraits are mouth variants of the same character for dialogue animation.
 
 Frame 1 is the base (closed mouth). Subsequent frames show the same character with progressively more open mouth.
@@ -692,12 +724,18 @@ Analyze these frames:
 1. Is this clearly the same character across all frames (same hair, eyes, clothing, background)?
 2. Do the mouth positions vary correctly (closed → slightly open → open)?
 3. Are there any visual artifacts or major inconsistencies?
+4. FRAMING CHECK: What percentage of each frame does the character's face fill? Is the zoom level and composition IDENTICAL across all frames, or did any frame shift, zoom in, or zoom out compared to frame 1? The face should fill the same percentage of the frame in every variant.
 
 Return ONLY a JSON object:
 {
   "coherent": true/false,
   "issues": ["list of specific problems, empty if none"],
-  "problematicFrames": [frame numbers (1-indexed) that have problems, empty if none]
+  "problematicFrames": [frame numbers (1-indexed) that have problems, empty if none],
+  "framing": {
+    "faceFillPercent": [estimated % face fills for each frame, e.g. 85, 88, 82],
+    "compositionConsistent": true/false,
+    "framingIssues": ["list of framing-specific problems, empty if none"]
+  }
 }`;
   }
 
@@ -728,14 +766,34 @@ Return ONLY a JSON object:
         } else {
           console.log(`  Visual QC: Passed`);
         }
+
+        // Parse framing data for dialogue/reaction sequences
+        let framingInconsistent = false;
+        let framingData = null;
+        if (result.framing && sequenceType !== 'action_closeup') {
+          framingData = result.framing;
+          const fills = result.framing.faceFillPercent;
+          if (Array.isArray(fills) && fills.length >= 2) {
+            const minFill = Math.min(...fills);
+            const maxFill = Math.max(...fills);
+            const variance = maxFill - minFill;
+            if (variance > 5 || result.framing.compositionConsistent === false) {
+              framingInconsistent = true;
+              console.log(`  Visual QC: Framing drift detected (fill range: ${minFill}%-${maxFill}%, variance: ${variance}%)`);
+            }
+          }
+        }
+
         return {
           coherent: result.coherent !== false,
           issues: result.issues || [],
           problematicFrames: result.problematicFrames || [],
+          framingInconsistent,
+          framingData,
         };
       } catch (e) {
         console.warn(`  Visual QC: Failed to parse response, assuming coherent`);
-        return { coherent: true, issues: [], problematicFrames: [] };
+        return { coherent: true, issues: [], problematicFrames: [], framingInconsistent: false, framingData: null };
       }
     }
 
@@ -992,6 +1050,6 @@ export async function regeneratePortrait(name, description, issueHint, options =
   console.log(`  Regenerating portrait for ${name} with issue feedback: "${issueHint.substring(0, 100)}..."`);
 
   const cappedDesc = capDescription(description, 200);
-  const prompt = `close-up face portrait of ${cappedDesc}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic. CRITICAL: Previous attempt had these issues: ${issueHint}. Ensure visual consistency and avoid these problems.`;
-  return generatePixelArt(prompt, { ...options, skipOrientationCheck: true });
+  const prompt = `Character portrait for RPG dialogue box: ${cappedDesc}. Square composition, face fills exactly 85-90% of the frame, centered. Dark moody background. Chunky blocky pixel art style like SNES Final Fantasy VI or Chrono Trigger character select portraits. Thick visible pixel grid, NOT anime, NOT smooth — low pixel count aesthetic (think 48x48 pixel portrait scaled up). Dithered shading, limited palette, hard pixel edges. CRITICAL: Previous attempt had these issues: ${issueHint}. Avoid these problems.`;
+  return generatePixelArt(prompt, { ...options, skipOrientationCheck: true, portraitSnap: true });
 }

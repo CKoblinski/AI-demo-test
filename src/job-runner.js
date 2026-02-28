@@ -31,7 +31,7 @@ import { createWriteStream } from 'fs';
 // Session states: uploaded → analyzing → plan_ready → planning → storyboard_ready → generating → exporting → complete → failed
 const sessions = new Map();
 
-const INTER_ANIMATION_DELAY_MS = 35000; // 35s between API calls to stay under rate limit
+const INTER_ANIMATION_DELAY_MS = 10000; // 10s between API calls (Tier 2 rate limits)
 
 /**
  * Create a new session from an uploaded VTT file.

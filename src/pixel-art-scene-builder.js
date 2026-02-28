@@ -148,7 +148,7 @@ export async function buildPixelScene({ moment, direction, cues, outDir, onProgr
   const bgStart = Date.now();
 
   // Pause before API call
-  await sleep(15000);
+  await sleep(2000);
 
   const bg = await generateSceneBackground(
     backgroundDescription,
@@ -864,6 +864,65 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
 
 
 /**
+ * Apply framing fallback: if QC detected framing drift (zoom/composition shift
+ * between mouth variants), swap drifted variants with the base portrait.
+ * This is a cheap fix (no API cost) that prevents face oscillation in the dialogue box.
+ *
+ * @param {object} portraitQC - QC result with framingInconsistent and framingData
+ * @param {object} portrait - Base portrait { buffer, base64, mimeType }
+ * @param {Array} mouthVariants - Array of mouth variant objects
+ * @param {string} assetsDir - Directory where variant files are saved
+ * @returns {Array} Updated mouthVariants (swapped variants use base portrait data)
+ */
+function applyFramingFallback(portraitQC, portrait, mouthVariants, assetsDir) {
+  if (!portraitQC.framingInconsistent || !portraitQC.framingData) return mouthVariants;
+
+  // The QC is still coherent overall (same character), just framing drifted.
+  // Swap any variant whose face-fill% diverges too much from frame 1.
+  const fills = portraitQC.framingData.faceFillPercent;
+  if (!Array.isArray(fills) || fills.length < 2) return mouthVariants;
+
+  const baseFill = fills[0]; // Frame 1 (base portrait)
+  let swapCount = 0;
+
+  for (let i = 0; i < mouthVariants.length; i++) {
+    const variantFillIdx = i + 1; // fills[0] is base, fills[1] is first variant, etc.
+    if (variantFillIdx >= fills.length) continue;
+
+    const variantFill = fills[variantFillIdx];
+    const drift = Math.abs(variantFill - baseFill);
+
+    if (drift > 5) {
+      // Swap this variant with the base portrait
+      console.log(`  Framing fallback: Swapping "${mouthVariants[i].label}" (${variantFill}% vs base ${baseFill}%, drift ${drift}%) with base portrait`);
+      mouthVariants[i] = {
+        ...mouthVariants[i],
+        buffer: portrait.buffer,
+        base64: portrait.base64,
+        mimeType: portrait.mimeType,
+      };
+
+      // Overwrite the file on disk too
+      try {
+        const variantPath = join(assetsDir, `portrait-${mouthVariants[i].label}.png`);
+        writeFileSync(variantPath, portrait.buffer);
+      } catch (e) {
+        console.warn(`  Framing fallback: Failed to overwrite file: ${e.message}`);
+      }
+
+      swapCount++;
+    }
+  }
+
+  if (swapCount > 0) {
+    console.log(`  Framing fallback: Swapped ${swapCount} variant(s) with base portrait`);
+  }
+
+  return mouthVariants;
+}
+
+
+/**
  * Generate assets for a dialogue sequence.
  * Produces: portrait, mouth variants (or reuses from cache), background.
  */
@@ -892,6 +951,20 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
   const charCard = isDM ? null : characterCards.find(ch => ch.name.toLowerCase() === rawSpeaker.toLowerCase());
 
   let portrait, mouthVariants;
+
+  // ── Start background generation early (independent of portrait) ──
+  // Background doesn't reference the portrait at all, so we kick it off
+  // immediately to run in parallel with portrait + mouth variant generation.
+  let bgPromise = null;
+  const needsNewBg = !reusedBg;
+  const bgDesc = seq.backgroundDescription || `fantasy scene, ${seq.backgroundMood || 'neutral'} atmosphere`;
+  if (needsNewBg) {
+    progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'generating' });
+    bgPromise = (async () => {
+      await sleep(2000); // Courtesy pause
+      return generateSceneBackground(bgDesc, seq.backgroundMood || 'neutral', { savePath: join(assetsDir, 'background.png') });
+    })();
+  }
 
   if (cached) {
     // Check if Director gave a different portraitDescription for this appearance (e.g. emotion change)
@@ -995,6 +1068,7 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
     if (isCancelled()) throw new Error('Generation cancelled');
 
     // ── Generate mouth variants ──
+    // (Background is already running in parallel — kicked off before portrait generation)
     progress('asset', { sequenceIndex: seqIndex, asset: 'mouthVariants', status: 'generating' });
 
     mouthVariants = await generateMouthVariants(
@@ -1006,11 +1080,7 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
     for (const v of mouthVariants) {
       result.assets.push(join(assetsDir, `portrait-${v.label}.png`));
     }
-
-    progress('asset', {
-      sequenceIndex: seqIndex, asset: 'mouthVariants', status: 'complete',
-      count: mouthVariants.length,
-    });
+    progress('asset', { sequenceIndex: seqIndex, asset: 'mouthVariants', status: 'complete', count: mouthVariants.length });
 
     if (isCancelled()) throw new Error('Generation cancelled');
 
@@ -1024,12 +1094,18 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
       'dialogue',
       `Portrait of ${speaker} with mouth variants`
     );
+
+    // ── Framing fallback: swap drifted variants with base (cheap, no API cost) ──
+    if (portraitQC.framingInconsistent && portraitQC.coherent) {
+      mouthVariants = applyFramingFallback(portraitQC, portrait, mouthVariants, assetsDir);
+    }
+
     if (!portraitQC.coherent && portraitQC.issues.length > 0) {
       const issueHint = portraitQC.issues.join('. ');
       console.log(`  Portrait QC: Retrying (issues: ${issueHint})`);
       progress('asset', { sequenceIndex: seqIndex, asset: 'portraitQC', status: 'generating', issues: portraitQC.issues });
 
-      await sleep(15000); // Rate limit pause
+      await sleep(5000); // Retry backoff pause
 
       try {
         // Regenerate base portrait with issue hint
@@ -1048,7 +1124,7 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
         result.cost += 0.04;
 
         // Regenerate mouth variants from new portrait
-        await sleep(15000);
+        await sleep(5000);
         mouthVariants = await generateMouthVariants(portrait.buffer, portrait.mimeType, { saveDir: assetsDir });
         result.cost += mouthVariants.length * 0.04;
 
@@ -1067,7 +1143,7 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
     characterCache.set(speaker, { portrait, mouthVariants, portraitDescription: seq.portraitDescription || '' });
   }
 
-  // ── Generate or reuse background ──
+  // ── Process background result ──
   let bg;
 
   if (reusedBg) {
@@ -1078,18 +1154,17 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
     result.backgroundMimeType = bg.mimeType;
     progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'complete', reused: true });
   } else {
-    progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'generating' });
-
-    // Rate limit pause
-    await sleep(15000);
-
-    const bgDesc = seq.backgroundDescription || `fantasy scene, ${seq.backgroundMood || 'neutral'} atmosphere`;
-    bg = await generateSceneBackground(
-      bgDesc,
-      seq.backgroundMood || 'neutral',
-      { savePath: join(assetsDir, 'background.png') }
-    );
-    result.cost += 0.04;
+    // Await the background that's been generating in parallel with portrait work
+    try {
+      bg = await bgPromise;
+      result.cost += 0.04;
+    } catch (bgErr) {
+      // Background generation failed — retry sequentially
+      console.warn(`  Background generation failed (${bgErr.message}), retrying...`);
+      await sleep(2000);
+      bg = await generateSceneBackground(bgDesc, seq.backgroundMood || 'neutral', { savePath: join(assetsDir, 'background.png') });
+      result.cost += 0.04;
+    }
 
     // ── Background QC for newly generated dialogue backgrounds ──
     if (sceneContext || bgDesc) {
@@ -1097,7 +1172,7 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
       if (!bgQC.accurate && bgQC.shouldRetry) {
         const issueHint = bgQC.issues.join('. ');
         console.log(`  Dialogue bg QC: Retrying (issues: ${issueHint})`);
-        await sleep(15000);
+        await sleep(5000);
         try {
           bg = await regenerateBackground(bgDesc, seq.backgroundMood || 'neutral', issueHint, { savePath: join(assetsDir, 'background.png') });
           result.cost += 0.04;
@@ -1238,17 +1313,18 @@ async function generateActionSequence(seq, seqDir, styleRef, opts) {
     );
 
     if (!qcResult.coherent && qcResult.problematicFrames.length > 0) {
-      // Regenerate problematic frames (max 1 retry per frame, skip frame 1)
-      let regenCount = 0;
+      // Regenerate problematic frames in parallel (each references frame 1 independently)
       const issueHint = qcResult.issues.join('. ');
+      const validFrameNums = qcResult.problematicFrames.filter(fn => {
+        const idx = fn - 1;
+        return idx > 0 && idx < frames.length; // Don't regen frame 1 (base)
+      });
 
-      for (const frameNum of qcResult.problematicFrames) {
-        const frameIdx = frameNum - 1; // Convert from 1-indexed
-        if (frameIdx <= 0 || frameIdx >= frames.length) continue; // Don't regen frame 1 (base)
+      await sleep(2000); // Courtesy pause before parallel burst
 
-        await sleep(15000); // Rate limit pause before Gemini call
-
-        try {
+      const regenResults = await Promise.allSettled(
+        validFrameNums.map(async (frameNum) => {
+          const frameIdx = frameNum - 1;
           const savePath = join(assetsDir, `${frames[frameIdx].label}.png`);
           const regen = await regenerateActionFrame(
             frames[0], // Use frame 1 as reference
@@ -1259,15 +1335,19 @@ async function generateActionSequence(seq, seqDir, styleRef, opts) {
             seq.backgroundMood || 'tense',
             { savePath }
           );
+          return { frameIdx, frameNum, regen };
+        })
+      );
 
-          frames[frameIdx] = {
-            ...regen,
-            label: frames[frameIdx].label,
-          };
+      let regenCount = 0;
+      for (const r of regenResults) {
+        if (r.status === 'fulfilled') {
+          const { frameIdx, regen } = r.value;
+          frames[frameIdx] = { ...regen, label: frames[frameIdx].label };
           result.cost += 0.04;
           regenCount++;
-        } catch (regenErr) {
-          console.warn(`  Failed to regenerate frame ${frameNum}: ${regenErr.message}`);
+        } else {
+          console.warn(`  Failed to regenerate frame: ${r.reason?.message}`);
         }
       }
 
@@ -1373,7 +1453,7 @@ async function generateEstablishingSequence(seq, seqDir, styleRef, opts) {
   progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'generating' });
 
   // Rate limit pause
-  await sleep(15000);
+  await sleep(2000);
 
   const bgDesc = seq.backgroundDescription || `wide establishing shot, fantasy scene, ${seq.backgroundMood || 'neutral'} atmosphere, cinematic composition`;
   let bg = await generateSceneBackground(
@@ -1399,7 +1479,7 @@ async function generateEstablishingSequence(seq, seqDir, styleRef, opts) {
       const issueHint = qcResult.issues.join('. ');
       console.log(`  Establishing shot QC: Retrying (issues: ${issueHint})`);
 
-      await sleep(15000); // Rate limit pause
+      await sleep(5000); // Retry backoff pause
 
       try {
         bg = await regenerateBackground(
@@ -1496,7 +1576,7 @@ async function generateReactionSequence(seq, seqDir, characterCache, styleRef, d
   progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'generating' });
 
   // Rate limit pause
-  await sleep(15000);
+  await sleep(2000);
 
   const bgDesc = seq.backgroundDescription || `fantasy scene, ${seq.backgroundMood || 'neutral'} atmosphere`;
   const bg = await generateSceneBackground(
@@ -1557,6 +1637,18 @@ async function generateDMDescriptionSequence(seq, seqDir, characterCache, styleR
   const cached = characterCache.get(speaker);
 
   let portrait, mouthVariants;
+
+  // ── Start background generation early (independent of portrait) ──
+  let bgPromise = null;
+  const needsNewBg = !reusedBg;
+  const bgDesc = seq.backgroundDescription || `fantasy scene, ${seq.backgroundMood || 'neutral'} atmosphere`;
+  if (needsNewBg) {
+    progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'generating' });
+    bgPromise = (async () => {
+      await sleep(2000); // Courtesy pause
+      return generateSceneBackground(bgDesc, seq.backgroundMood || 'neutral', { savePath: join(assetsDir, 'background.png') });
+    })();
+  }
 
   if (cached) {
     console.log(`  Reusing cached narrator portrait`);
@@ -1629,11 +1721,29 @@ async function generateDMDescriptionSequence(seq, seqDir, characterCache, styleR
 
     if (isCancelled()) throw new Error('Generation cancelled');
 
+    // ── Portrait Framing QC for DM narrator ──
+    if (mouthVariants.length > 0) {
+      const allPortraitFrames = [
+        { buffer: portrait.buffer, base64: portrait.base64, mimeType: portrait.mimeType, label: 'base' },
+        ...mouthVariants.map(v => ({ buffer: v.buffer, base64: v.base64, mimeType: v.mimeType, label: v.label })),
+      ];
+      const portraitQC = await checkVisualCoherence(
+        allPortraitFrames,
+        'dialogue',
+        `Narrator portrait with mouth variants`
+      );
+
+      // Framing fallback: swap drifted variants with base (cheap, no API cost)
+      if (portraitQC.framingInconsistent && portraitQC.coherent) {
+        mouthVariants = applyFramingFallback(portraitQC, portrait, mouthVariants, assetsDir);
+      }
+    }
+
     // Cache globally — narrator is reused across all DM sequences
     characterCache.set(speaker, { portrait, mouthVariants, portraitDescription: 'Narrator' });
   }
 
-  // ── Generate or reuse background ──
+  // ── Await background (has been generating in parallel with portrait work) ──
   let bg;
 
   if (reusedBg) {
@@ -1643,16 +1753,17 @@ async function generateDMDescriptionSequence(seq, seqDir, characterCache, styleR
     result.backgroundMimeType = bg.mimeType;
     progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'complete', reused: true });
   } else {
-    progress('asset', { sequenceIndex: seqIndex, asset: 'background', status: 'generating' });
-    await sleep(15000);
-
-    const bgDesc = seq.backgroundDescription || `fantasy scene, ${seq.backgroundMood || 'neutral'} atmosphere`;
-    bg = await generateSceneBackground(
-      bgDesc,
-      seq.backgroundMood || 'neutral',
-      { savePath: join(assetsDir, 'background.png') }
-    );
-    result.cost += 0.04;
+    // Await the background that's been generating in parallel with portrait work
+    try {
+      bg = await bgPromise;
+      result.cost += 0.04;
+    } catch (bgErr) {
+      // Background generation failed — retry sequentially
+      console.warn(`  DM background generation failed (${bgErr.message}), retrying...`);
+      await sleep(2000);
+      bg = await generateSceneBackground(bgDesc, seq.backgroundMood || 'neutral', { savePath: join(assetsDir, 'background.png') });
+      result.cost += 0.04;
+    }
 
     // ── Background QC for newly generated DM backgrounds ──
     if (sceneContext || bgDesc) {
@@ -1660,7 +1771,7 @@ async function generateDMDescriptionSequence(seq, seqDir, characterCache, styleR
       if (!bgQC.accurate && bgQC.shouldRetry) {
         const issueHint = bgQC.issues.join('. ');
         console.log(`  DM bg QC: Retrying (issues: ${issueHint})`);
-        await sleep(15000);
+        await sleep(5000); // Retry backoff pause
         try {
           bg = await regenerateBackground(bgDesc, seq.backgroundMood || 'neutral', issueHint, { savePath: join(assetsDir, 'background.png') });
           result.cost += 0.04;

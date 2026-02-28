@@ -89,7 +89,7 @@ export async function findHighlights(session, options = {}) {
 
     // Wait between chunks to respect rate limits (Haiku has higher limits)
     if (ci > 0) {
-      const waitSec = model.includes('haiku') ? 5 : 65;
+      const waitSec = model.includes('haiku') ? 1 : 15;
       console.log(`  Waiting ${waitSec}s between chunks...`);
       await sleep(waitSec * 1000);
     }
