@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { getRelevantKnowledge, loadKnowledge } from './knowledge.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -32,9 +33,10 @@ const END_BUFFER_MS = 1000;
  * @param {object} params
  * @param {object} params.moment - Highlight object
  * @param {object[]} params.cues - Full session cues array
+ * @param {object} [params.sessionSummary] - Session summary card (proper noun translations, setting, stakes)
  * @returns {Promise<object>} Scene context brief
  */
-export async function buildSceneContext({ moment, cues }) {
+export async function buildSceneContext({ moment, cues, sessionSummary }) {
   const client = new Anthropic();
 
   const promptPath = join(__dirname, '..', 'prompts', 'scene-context.md');
@@ -57,6 +59,31 @@ export async function buildSceneContext({ moment, cues }) {
   lines.push(`**Type:** ${moment.type} | **Time:** ${formatTime(moment.startTime)} → ${formatTime(moment.endTime)}`);
   lines.push(`**Emotional Arc:** ${moment.emotionalArc || 'N/A'}`);
   lines.push(`**Context:** ${moment.contextForViewers || 'N/A'}`);
+  lines.push('');
+  lines.push('## Transcript');
+
+  // Include session summary context for proper noun translation and world info
+  if (sessionSummary) {
+    if (sessionSummary.sessionSetting) {
+      lines.push('');
+      lines.push('## Session Setting (from session summary)');
+      lines.push(sessionSummary.sessionSetting);
+    }
+    if (sessionSummary.properNounTranslations && Object.keys(sessionSummary.properNounTranslations).length > 0) {
+      lines.push('');
+      lines.push('## Proper Noun Visual References');
+      lines.push('Use these visual descriptions when describing locations, creatures, and objects:');
+      for (const [noun, desc] of Object.entries(sessionSummary.properNounTranslations)) {
+        lines.push(`- **${noun}**: ${desc}`);
+      }
+    }
+    if (sessionSummary.activeStakes) {
+      lines.push('');
+      lines.push('## Active Stakes');
+      lines.push(sessionSummary.activeStakes);
+    }
+  }
+
   lines.push('');
   lines.push('## Transcript');
 
@@ -112,23 +139,45 @@ export async function buildSceneContext({ moment, cues }) {
  * @param {string} params.direction - User's creative direction text
  * @param {object[]} params.cues - Full session cues array
  * @param {object} [params.sceneContext] - Scene context brief from buildSceneContext
+ * @param {object} [params.sessionSummary] - Session summary card for proper noun translations
  * @returns {Promise<object>} Sequence plan: { momentTitle, totalDurationSec, estimatedCost, sequences: [...] }
  */
-export async function planSequences({ moment, direction, cues, sceneContext }) {
+export async function planSequences({ moment, direction, cues, sceneContext, sessionSummary }) {
   const client = new Anthropic();
 
   // Load the director prompt
   const promptPath = join(__dirname, '..', 'prompts', 'sequence-director.md');
   const systemPrompt = readFileSync(promptPath, 'utf-8');
 
-  // Load character cards if available
-  const charactersPath = join(__dirname, '..', 'data', 'characters.json');
+  // Load characters from knowledge base (replaces legacy characters.json)
   let characters = [];
-  if (existsSync(charactersPath)) {
-    try {
-      characters = JSON.parse(readFileSync(charactersPath, 'utf-8')).characters || [];
-    } catch (e) {
-      console.warn('  Warning: Failed to load character cards:', e.message);
+  let knowledgeNPCs = [];
+  let knowledgeLocations = [];
+  try {
+    const kb = loadKnowledge();
+    characters = kb.characters || [];
+
+    // Also collect NPC/location knowledge for richer Director context
+    // Get speaker names from moment dialogue
+    const speakerNames = new Set();
+    if (moment.dialogueExcerpt) {
+      for (const line of moment.dialogueExcerpt) {
+        if (line.speaker) speakerNames.add(line.speaker);
+      }
+    }
+    const relevant = getRelevantKnowledge(Array.from(speakerNames), sceneContext);
+    knowledgeNPCs = relevant.npcs || [];
+    knowledgeLocations = relevant.locations || [];
+  } catch (e) {
+    console.warn('  Warning: Failed to load knowledge base:', e.message);
+    // Fall back to characters.json if knowledge base fails
+    const charactersPath = join(__dirname, '..', 'data', 'characters.json');
+    if (existsSync(charactersPath)) {
+      try {
+        characters = JSON.parse(readFileSync(charactersPath, 'utf-8')).characters || [];
+      } catch (e2) {
+        console.warn('  Warning: Failed to load character cards:', e2.message);
+      }
     }
   }
 
@@ -144,6 +193,15 @@ export async function planSequences({ moment, direction, cues, sceneContext }) {
   contextParts.push(`**Emotional Arc:** ${moment.emotionalArc || 'N/A'}`);
   contextParts.push(`**Why It's Good:** ${moment.whyItsGood || 'N/A'}`);
   contextParts.push(`**Context for Viewers:** ${moment.contextForViewers || 'N/A'}`);
+  if (moment.framingStrategy) {
+    contextParts.push(`**Framing Strategy:** ${moment.framingStrategy}`);
+  }
+  if (moment.dmSetupLine) {
+    contextParts.push(`**DM Setup Line (starting point — refine as needed):** "${moment.dmSetupLine}"`);
+  }
+  if (moment.hookLine) {
+    contextParts.push(`**Hook Line (strongest single beat):** "${moment.hookLine}"`);
+  }
   contextParts.push(`**Suggested Background Mood:** ${moment.suggestedBackgroundMood || 'neutral'}`);
   contextParts.push(`**Visual Concept (rough sketch):** ${moment.visualConcept || 'N/A'}`);
   contextParts.push(`**Original Cue Range:** startCue=${moment.startCue}, endCue=${moment.endCue}`);
@@ -214,6 +272,37 @@ export async function planSequences({ moment, direction, cues, sceneContext }) {
         }
         contextParts.push(charLine);
       }
+    }
+  }
+
+  // Session summary — proper noun translations for image-model-friendly descriptions
+  if (sessionSummary && sessionSummary.properNounTranslations && Object.keys(sessionSummary.properNounTranslations).length > 0) {
+    contextParts.push(`\n## Proper Noun Visual References (for background/portrait descriptions)`);
+    contextParts.push(`When writing backgroundDescription or portraitDescription, use these visual translations instead of raw proper nouns:`);
+    for (const [noun, desc] of Object.entries(sessionSummary.properNounTranslations)) {
+      contextParts.push(`- **${noun}**: ${desc}`);
+    }
+  }
+
+  // Session summary — active stakes (helps Director frame moments for outsiders)
+  if (sessionSummary && sessionSummary.activeStakes) {
+    contextParts.push(`\n## Session Stakes (what's at risk — use for DM setup lines)`);
+    contextParts.push(sessionSummary.activeStakes);
+  }
+
+  // NPCs & Creatures from knowledge base
+  if (knowledgeNPCs.length > 0) {
+    contextParts.push(`\n## NPCs & Creatures (from knowledge base)`);
+    for (const npc of knowledgeNPCs) {
+      contextParts.push(`- **${npc.name}** (${npc.type}): ${npc.visualDescription || 'No visual description available'}`);
+    }
+  }
+
+  // Locations from knowledge base
+  if (knowledgeLocations.length > 0) {
+    contextParts.push(`\n## Known Locations (from knowledge base)`);
+    for (const loc of knowledgeLocations) {
+      contextParts.push(`- **${loc.name}**: ${loc.visualDescription || 'No visual description available'}`);
     }
   }
 
@@ -485,10 +574,11 @@ export async function creativeQC(plan, sceneContext, characterCards) {
  * @param {string} params.direction - User's creative direction
  * @param {object[]} params.cues - Full session cues
  * @param {object} [params.sceneContext] - Pre-built scene context (skip building if provided)
+ * @param {object} [params.sessionSummary] - Session summary card for proper noun translations
  * @param {function} [params.onProgress] - Progress callback
  * @returns {Promise<{ plan: object, qcResult: object, creativeResult: object, sceneContext: object }>}
  */
-export async function runDirectorPipeline({ moment, direction, cues, sceneContext, onProgress }) {
+export async function runDirectorPipeline({ moment, direction, cues, sceneContext, sessionSummary, onProgress }) {
   const progress = onProgress || (() => {});
 
   // Load character cards once for the pipeline
@@ -503,7 +593,7 @@ export async function runDirectorPipeline({ moment, direction, cues, sceneContex
   // Step 1: Build scene context (wide transcript analysis)
   if (!sceneContext) {
     progress('scene_context', 'Building scene context...');
-    sceneContext = await buildSceneContext({ moment, cues });
+    sceneContext = await buildSceneContext({ moment, cues, sessionSummary });
   }
 
   // Step 2-4: Plan → Technical QC → Creative QC (with retry loop)
@@ -528,7 +618,7 @@ export async function runDirectorPipeline({ moment, direction, cues, sceneContex
 
     // Plan sequences
     progress('planning', 'Director AI planning sequences...');
-    plan = await planSequences({ moment, direction: augmentedDirection, cues, sceneContext });
+    plan = await planSequences({ moment, direction: augmentedDirection, cues, sceneContext, sessionSummary });
 
     // Technical QC (Haiku — timing math, field validation)
     progress('technical_qc', 'Technical quality check...');

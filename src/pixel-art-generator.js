@@ -145,8 +145,74 @@ export async function generatePixelArt(prompt, options = {}) {
 
 /**
  * Generate a character portrait (close-up face for dialogue scenes).
+ * Optionally accepts a reference image for cross-session visual consistency.
+ *
+ * @param {string} name - Character name
+ * @param {string} description - Visual description of the character
+ * @param {object} [options]
+ * @param {string} [options.savePath] - Path to save the PNG
+ * @param {object} [options.referenceImage] - Optional reference image { base64, mimeType }
+ * @returns {Promise<{ buffer: Buffer, base64: string, mimeType: string, path?: string, durationMs: number }>}
  */
 export async function generateCharacterPortrait(name, description, options = {}) {
+  if (options.referenceImage) {
+    // Reference-based generation: use saved portrait as style anchor
+    const ai = getClient();
+    const prompt = STYLE_PREFIX + `This is a reference portrait. Create a NEW portrait of the same character in the same pixel art style. The character should look like themselves (same face, hair, clothing) but with the expression and emotion matching this description: ${description}. close-up face portrait, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box.`;
+
+    console.log(`  Generating portrait (with reference): ${description.substring(0, 80)}...`);
+    const startTime = Date.now();
+
+    let response;
+    const maxRetries = 2;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        response = await ai.models.generateContent({
+          model: 'gemini-3.1-flash-image-preview',
+          contents: [{
+            parts: [
+              { inlineData: { data: options.referenceImage.base64, mimeType: options.referenceImage.mimeType || 'image/png' } },
+              { text: prompt },
+            ],
+          }],
+          config: { responseModalities: ['image', 'text'] },
+        });
+        break;
+      } catch (err) {
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 15000 * attempt));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    const imagePart = parts.find(p => p.inlineData);
+
+    if (!imagePart) {
+      console.warn('  Reference-based portrait failed, falling back to fresh generation');
+      // Fall through to normal generation
+    } else {
+      const base64 = imagePart.inlineData.data;
+      const mimeType = imagePart.inlineData.mimeType || 'image/png';
+      const buffer = Buffer.from(base64, 'base64');
+
+      console.log(`  Generated portrait (ref-based, ${durationMs}ms, ${Math.round(buffer.length / 1024)}KB)`);
+
+      let savedPath = null;
+      if (options.savePath) {
+        mkdirSync(dirname(options.savePath), { recursive: true });
+        writeFileSync(options.savePath, buffer);
+        savedPath = options.savePath;
+      }
+
+      return { buffer, base64, mimeType, path: savedPath, durationMs };
+    }
+  }
+
+  // Standard generation (no reference)
   const prompt = `close-up face portrait of ${description}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic`;
   return generatePixelArt(prompt, { ...options, skipOrientationCheck: true });
 }
@@ -665,4 +731,152 @@ export async function generateSceneBackground(description, mood = 'neutral', opt
   const moodStr = moodModifiers[mood] || moodModifiers.neutral;
   const prompt = `${description}, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, detailed environment, RPG game background`;
   return generatePixelArt(prompt, options);
+}
+
+/**
+ * Check background accuracy using Gemini Flash vision.
+ * Compares a generated background against the scene context and description.
+ * Catches: wrong setting, baked-in text, wrong mood/lighting, style breaks.
+ *
+ * @param {Buffer} imageBuffer - The generated background PNG
+ * @param {string} imageMimeType - MIME type of the image
+ * @param {object|null} sceneContext - Scene context from Director pipeline (setting, conflict, etc.)
+ * @param {string} sequenceDesc - The backgroundDescription from the sequence plan
+ * @returns {Promise<{ accurate: boolean, issues: string[], shouldRetry: boolean }>}
+ */
+export async function checkBackgroundAccuracy(imageBuffer, imageMimeType, sceneContext, sequenceDesc) {
+  const ai = getClient();
+  const imageBase64 = imageBuffer.toString('base64');
+
+  // Build context string from scene context
+  let contextStr = '';
+  if (sceneContext) {
+    if (sceneContext.setting) contextStr += `Setting: ${sceneContext.setting}\n`;
+    if (sceneContext.conflict) contextStr += `Conflict: ${sceneContext.conflict}\n`;
+    if (sceneContext.enemies) contextStr += `Enemies/NPCs: ${sceneContext.enemies}\n`;
+    if (sceneContext.emotionalTemperature) contextStr += `Mood: ${sceneContext.emotionalTemperature}\n`;
+  }
+
+  const analysisPrompt = `You are a visual QC checker for pixel art backgrounds used in D&D YouTube Shorts.
+
+This background was generated from this description:
+"${sequenceDesc}"
+
+${contextStr ? `Scene context from the D&D session transcript:\n${contextStr}` : ''}
+
+Check this image for these issues:
+
+1. **Text/Labels**: Does the image contain ANY visible text, words, numbers, letters, labels, titles, UI elements, health bars, watermarks, or speech bubbles? This is the most critical check — any text at all is a FAIL.
+2. **Setting accuracy**: Does the image match the described setting? (e.g., if the description says "tavern interior" but the image shows a forest, that's wrong)
+3. **Style compliance**: Is this actual pixel art (visible pixel grid, limited palette, SNES-era aesthetic)? If it looks photorealistic, smooth digital art, or anime-style, that's wrong.
+4. **Mood/lighting**: Does the lighting and mood roughly match what was described?
+
+Return ONLY a JSON object:
+{
+  "accurate": true/false,
+  "issues": ["list of specific problems found, empty if none"],
+  "shouldRetry": true/false
+}
+
+Set shouldRetry to TRUE only for MAJOR issues:
+- Image contains visible text, labels, or UI elements
+- Completely wrong setting (forest instead of tavern)
+- Not pixel art at all (photorealistic or smooth digital)
+
+Set shouldRetry to FALSE for minor issues:
+- Slightly wrong lighting direction
+- Missing small details from the description
+- Mood is close but not perfect`;
+
+  console.log(`  Background QC: Checking accuracy...`);
+  const startTime = Date.now();
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{
+        parts: [
+          { inlineData: { data: imageBase64, mimeType: imageMimeType || 'image/png' } },
+          { text: analysisPrompt },
+        ],
+      }],
+    });
+
+    const durationMs = Date.now() - startTime;
+    console.log(`  Background QC: Done (${durationMs}ms)`);
+
+    const text = response.candidates?.[0]?.content?.parts
+      ?.find(p => p.text)?.text || '';
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const result = JSON.parse(jsonMatch[0]);
+        if (!result.accurate) {
+          console.log(`  Background QC: ISSUES — ${(result.issues || []).join('; ')}`);
+          console.log(`  Background QC: shouldRetry=${result.shouldRetry}`);
+        } else {
+          console.log(`  Background QC: Passed ✓`);
+        }
+        return {
+          accurate: result.accurate !== false,
+          issues: result.issues || [],
+          shouldRetry: result.shouldRetry === true,
+        };
+      } catch (e) {
+        console.warn(`  Background QC: Failed to parse response, assuming accurate`);
+        return { accurate: true, issues: [], shouldRetry: false };
+      }
+    }
+
+    console.warn(`  Background QC: No JSON in response, assuming accurate`);
+    return { accurate: true, issues: [], shouldRetry: false };
+  } catch (err) {
+    console.warn(`  Background QC: Error (${err.message}), skipping`);
+    return { accurate: true, issues: [], shouldRetry: false };
+  }
+}
+
+/**
+ * Regenerate a background with additional guidance about what was wrong.
+ * Same as generateSceneBackground but appends issue feedback to the prompt.
+ *
+ * @param {string} description - Background description
+ * @param {string} mood - Background mood
+ * @param {string} issueHint - What was wrong with the previous attempt
+ * @param {object} [options] - { savePath }
+ * @returns {Promise<{ buffer: Buffer, base64: string, mimeType: string, path?: string, durationMs: number }>}
+ */
+export async function regenerateBackground(description, mood = 'neutral', issueHint, options = {}) {
+  const moodModifiers = {
+    triumphant: 'golden warm light, celebratory atmosphere',
+    tense: 'cold blue shadows, dramatic contrast',
+    mysterious: 'purple mist, ethereal glow',
+    dark: 'deep shadows, ominous red accents',
+    neutral: 'balanced warm and cool tones',
+    comedic: 'bright colors, exaggerated details',
+  };
+  const moodStr = moodModifiers[mood] || moodModifiers.neutral;
+
+  console.log(`  Regenerating background with issue feedback: "${issueHint.substring(0, 100)}..."`);
+
+  const prompt = `${description}, vertical composition (portrait orientation 9:16 aspect ratio), ${moodStr}, detailed environment, RPG game background. CRITICAL: Previous attempt had these issues: ${issueHint}. You MUST avoid these problems. Do NOT include any text, words, numbers, labels, or UI elements.`;
+  return generatePixelArt(prompt, options);
+}
+
+/**
+ * Regenerate a character portrait with additional guidance about what was wrong.
+ * Uses the same portrait prompt pattern but appends issue feedback.
+ *
+ * @param {string} name - Character name
+ * @param {string} description - Portrait description
+ * @param {string} issueHint - What was wrong with the previous attempt
+ * @param {object} [options] - { savePath }
+ * @returns {Promise<{ buffer: Buffer, base64: string, mimeType: string, path?: string, durationMs: number }>}
+ */
+export async function regeneratePortrait(name, description, issueHint, options = {}) {
+  console.log(`  Regenerating portrait for ${name} with issue feedback: "${issueHint.substring(0, 100)}..."`);
+
+  const prompt = `close-up face portrait of ${description}, expressive eyes, dramatic lighting, dark background, square composition, character portrait for RPG dialogue box, pixel art RPG portrait with visible individual pixels, retro game aesthetic. CRITICAL: Previous attempt had these issues: ${issueHint}. Ensure visual consistency and avoid these problems.`;
+  return generatePixelArt(prompt, { ...options, skipOrientationCheck: true });
 }

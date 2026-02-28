@@ -10,6 +10,7 @@ import {
   updateStoryboard,
 } from './src/job-runner.js';
 import { listAnimations, getAnimationHtml } from './src/library.js';
+import { loadCampaignContext } from './src/session-summary.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -100,6 +101,11 @@ app.get('/api/sessions/:id', (req, res) => {
     createdAt: session.createdAt,
     estimatedMinutes: session.estimatedMinutes,
   };
+
+  // Include session summary when available
+  if (session.sessionSummary) {
+    response.sessionSummary = session.sessionSummary;
+  }
 
   // Include highlights (pixel art pipeline) when plan is ready
   if (session.highlights) {
@@ -338,6 +344,30 @@ app.get('/api/sessions/:id/download', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// List available campaign context cards
+app.get('/api/campaigns', (req, res) => {
+  try {
+    const campaigns = loadCampaignContext();
+    res.json(campaigns.map(c => ({
+      campaignId: c.campaignId,
+      title: c.title,
+      setting: c.setting,
+      locationCount: c.locations?.length || 0,
+      conceptCount: c.worldConcepts?.length || 0,
+      factionCount: c.factions?.length || 0,
+    })));
+  } catch (err) {
+    res.json([]);
+  }
+});
+
+// Get a specific campaign context card
+app.get('/api/campaigns/:id', (req, res) => {
+  const campaigns = loadCampaignContext([req.params.id]);
+  if (campaigns.length === 0) return res.status(404).json({ error: 'Campaign not found' });
+  res.json(campaigns[0]);
 });
 
 // Get animation library

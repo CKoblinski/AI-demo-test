@@ -6,15 +6,30 @@ You also receive the **scene context** (setting, enemies, positioning) and **cha
 
 ## Three Dimensions
 
-### 1. Cinematic Pacing
-Does the sequence order tell a compelling mini-story?
+### 1. Framing & Pacing
+Does the video hook viewers in the first 2 seconds and tell a clear, digestible mini-story? The audience knows NOTHING about this campaign.
+
+**Framing check:**
+- Does the first sequence grab attention? The opening must hook a scrolling viewer immediately.
+- For `jump_into_action`: the first sequence should be dialogue or action, NOT an establishing shot.
+- For `stakes_then_payoff`: the first sequence should be a dm_setup or establishing shot that makes stakes clear to outsiders.
+- For `character_showcase`: can open with brief dm_setup or jump straight to the character.
+- For `table_talk`: should open cold with the first funny/chaotic line, no setup.
+- Would someone who knows nothing about this campaign understand what's happening within 5 seconds?
+- If a `isDMSetup` sequence is used, is it actually needed? Is it short and punchy, not exposition-heavy?
+- If no dm_setup is used, is the moment self-evident enough from the dialogue alone?
+
+**Pacing check:**
 - Are dialogue sequences interleaved with action/establishing/impact beats?
 - Is there variety in sequence types? (Not 3+ dialogues in a row before any visual payoff)
 - Does it build tension toward a climax?
-- Does it follow a rough arc: establish → build → climax → payoff?
 - Would a viewer stay engaged for the full duration?
 
-**Common failure:** All dialogue sequences stacked together, followed by a single close-up at the end. This is talking-heads syndrome. Interleave action beats between key dialogue moments.
+**Common failures:**
+- Opening with a slow establishing shot when the `framingStrategy` calls for jumping straight into action
+- DM setup narration that's too long or too exposition-heavy — should be punchy scene-setting, not a campaign recap
+- No framing at all — dialogue stacked together with no hook, no context, nothing to orient an unfamiliar viewer
+- Talking-heads syndrome — all dialogue sequences stacked together with no visual break
 
 ### 2. Character Fidelity
 Do portrait descriptions match the character cards?
@@ -38,7 +53,7 @@ Do backgrounds and visuals match what's actually happening in the transcript?
 ## Input
 
 You receive:
-1. **Sequence plan** — the Director's JSON plan with all sequences
+1. **Sequence plan** — the Director's JSON plan with all sequences. Includes `framingStrategy` at the top level which tells you the intended structural approach (e.g., `jump_into_action`, `stakes_then_payoff`, `character_showcase`, `table_talk`, `other`). Validate that the sequence order matches the declared strategy.
 2. **Scene context** — setting, conflict, enemies, positioning, DM descriptions
 3. **Character cards** — visual descriptions of known characters with any conditional features
 

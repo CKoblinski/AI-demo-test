@@ -11,7 +11,15 @@ import {
   generateActionFrames,
   checkVisualCoherence,
   regenerateActionFrame,
+  checkBackgroundAccuracy,
+  regenerateBackground,
+  regeneratePortrait,
 } from './pixel-art-generator.js';
+import {
+  findEntity,
+  findBestPortrait,
+  addPortrait,
+} from './knowledge.js';
 import {
   assembleAnimatedDialogueScene,
   assembleActionBounceScene,
@@ -433,16 +441,17 @@ function slugify(text) {
  * sessions that go through the Director AI flow.
  *
  * @param {object} params
- * @param {object} params.storyboard - Storyboard from Director AI { plan, qcResult }
+ * @param {object} params.storyboard - Storyboard from Director AI { plan, qcResult, sceneContext }
  * @param {object} params.moment - Highlight object
  * @param {string} params.direction - User's creative direction
  * @param {object[]} params.cues - Session cues
  * @param {string} params.outDir - Output directory
+ * @param {object} [params.sceneContext] - Scene context from Director pipeline (setting, conflict, etc.)
  * @param {function} [params.onProgress] - Progress callback: (step, data) => void
  * @param {function} [params.checkCancelled] - Returns true if cancelled
  * @returns {object} Result with all sequence data, player HTML, exports
  */
-export async function buildMomentSequences({ storyboard, moment, direction, cues, outDir, onProgress, checkCancelled }) {
+export async function buildMomentSequences({ storyboard, moment, direction, cues, outDir, sceneContext, onProgress, checkCancelled }) {
   const progress = onProgress || (() => {});
   const isCancelled = checkCancelled || (() => false);
 
@@ -521,13 +530,13 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
     switch (seq.type) {
       case 'dialogue':
         seqResult = await generateDialogueSequence(seq, seqDir, characterCache, previousBgRef, direction, {
-          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, reusedBg, characterCards,
+          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, reusedBg, characterCards, sceneContext,
         });
         break;
 
       case 'dm_description':
         seqResult = await generateDMDescriptionSequence(seq, seqDir, characterCache, previousBgRef, direction, {
-          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, reusedBg,
+          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, reusedBg, sceneContext,
         });
         break;
 
@@ -544,21 +553,21 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
 
       case 'establishing_shot':
         seqResult = await generateEstablishingSequence(seq, seqDir, previousBgRef, {
-          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length,
+          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, sceneContext,
         });
         break;
 
       case 'reaction':
         // Legacy: treat as short dialogue
         seqResult = await generateDialogueSequence(seq, seqDir, characterCache, previousBgRef, direction, {
-          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, reusedBg, characterCards,
+          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, reusedBg, characterCards, sceneContext,
         });
         break;
 
       default:
         console.warn(`  Unknown sequence type: ${seq.type}, treating as establishing_shot`);
         seqResult = await generateEstablishingSequence(seq, seqDir, previousBgRef, {
-          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length,
+          progress, isCancelled, seqIndex: i, totalSeqs: sequences.length, sceneContext,
         });
     }
 
@@ -717,6 +726,57 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
     },
   });
 
+  // ─── Concatenate into master MP4 ───
+
+  if (exportedCount >= 2) {
+    progress('concat', { status: 'concatenating', detail: 'Stitching sequences into master MP4' });
+
+    const mp4Files = result.sequenceExports
+      .filter(e => e.mp4)
+      .map(e => e.mp4);
+
+    const concatListPath = join(outDir, 'concat-list.txt');
+    const concatContent = mp4Files.map(f => `file '${f}'`).join('\n');
+    writeFileSync(concatListPath, concatContent);
+
+    const masterMp4Path = join(outDir, 'scene.mp4');
+
+    try {
+      await new Promise((resolve, reject) => {
+        exec(
+          `ffmpeg -y -f concat -safe 0 -i "${concatListPath}" -c copy "${masterMp4Path}"`,
+          { timeout: 60000 },
+          (err, stdout, stderr) => {
+            if (err) {
+              console.error('  Master MP4 concat failed:', stderr);
+              reject(err);
+            } else {
+              resolve(stdout);
+            }
+          }
+        );
+      });
+
+      if (existsSync(masterMp4Path)) {
+        result.masterMp4 = masterMp4Path;
+        result.assets.push(masterMp4Path);
+        const sizeKB = Math.round(readFileSync(masterMp4Path).length / 1024);
+        console.log(`  Master MP4: ${masterMp4Path} (${sizeKB}KB)`);
+        progress('concat', { status: 'complete', path: masterMp4Path, sizeKB });
+      }
+    } catch (err) {
+      console.error(`  Master MP4 concat error: ${err.message}`);
+      progress('concat', { status: 'failed', error: err.message });
+    }
+  } else if (exportedCount === 1) {
+    // Only one sequence — use it directly as the master
+    const singleMp4 = result.sequenceExports.find(e => e.mp4)?.mp4;
+    if (singleMp4) {
+      result.masterMp4 = singleMp4;
+      console.log(`  Single sequence — master MP4 is: ${singleMp4}`);
+    }
+  }
+
   // ─── Save metadata ───
 
   result.totalDurationMs = Date.now() - startTime;
@@ -752,6 +812,7 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
     durationMs: result.totalDurationMs,
     generatedAt: new Date().toISOString(),
     files: {
+      masterMp4: result.masterMp4 || null,
       playerHtml: result.playerHtml,
       sequenceExports: result.sequenceExports,
     },
@@ -770,7 +831,7 @@ export async function buildMomentSequences({ storyboard, moment, direction, cues
  * Produces: portrait, mouth variants (or reuses from cache), background.
  */
 async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, direction, opts) {
-  const { progress, isCancelled, seqIndex, totalSeqs, reusedBg, characterCards = [] } = opts;
+  const { progress, isCancelled, seqIndex, totalSeqs, reusedBg, characterCards = [], sceneContext } = opts;
   const assetsDir = join(seqDir, 'assets');
 
   const result = {
@@ -845,13 +906,48 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
       : charCard
         ? `${charCard.visualDescription} ${seq.portraitDescription || ''}`
         : (seq.portraitDescription || extractCharacterDescription(rawSpeaker, direction));
-    portrait = await generateCharacterPortrait(
-      speaker,
-      portraitDesc,
-      { savePath: join(assetsDir, 'portrait.png') }
-    );
-    result.cost += 0.04;
+
+    // ── Cross-session portrait persistence: check for saved reference ──
+    const entityId = isDM ? 'narrator' : slugify(rawSpeaker);
+    let savedPortrait = null;
+    try {
+      savedPortrait = findBestPortrait(entityId);
+    } catch (e) { /* non-fatal */ }
+
+    if (savedPortrait && !isDM) {
+      // Use saved portrait as reference anchor for visual consistency
+      console.log(`  Reusing saved portrait as reference for ${rawSpeaker}`);
+      portrait = await generateExpressionVariant(
+        savedPortrait.buffer,
+        savedPortrait.mimeType,
+        portraitDesc,
+        { savePath: join(assetsDir, 'portrait.png') }
+      );
+      result.cost += 0.04;
+    } else {
+      // Generate fresh (no reference available)
+      portrait = await generateCharacterPortrait(
+        speaker,
+        portraitDesc,
+        { savePath: join(assetsDir, 'portrait.png') }
+      );
+      result.cost += 0.04;
+    }
+
     result.assets.push(join(assetsDir, 'portrait.png'));
+
+    // Save to knowledge base for cross-session reuse
+    try {
+      addPortrait(entityId, {
+        buffer: portrait.buffer,
+        mimeType: portrait.mimeType,
+        mood: seq.backgroundMood || 'neutral',
+        description: seq.portraitDescription || portraitDesc,
+        quality: 1,
+      });
+    } catch (e) {
+      console.warn(`  Failed to save portrait to knowledge base: ${e.message}`);
+    }
 
     progress('asset', {
       sequenceIndex: seqIndex, asset: 'portrait', status: 'complete',
@@ -881,10 +977,7 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
 
     if (isCancelled()) throw new Error('Generation cancelled');
 
-    // Cache for reuse in later sequences (store portraitDescription for expression comparison)
-    characterCache.set(speaker, { portrait, mouthVariants, portraitDescription: seq.portraitDescription || '' });
-
-    // ── Portrait Visual QC (log only, no auto-regen) ──
+    // ── Portrait Visual QC — retry if issues found (max 1 retry) ──
     const allPortraitFrames = [
       { buffer: portrait.buffer, base64: portrait.base64, mimeType: portrait.mimeType, label: 'base' },
       ...mouthVariants.map(v => ({ buffer: v.buffer, base64: v.base64, mimeType: v.mimeType, label: v.label })),
@@ -894,9 +987,44 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
       'dialogue',
       `Portrait of ${speaker} with mouth variants`
     );
-    if (!portraitQC.coherent) {
-      console.log(`  Portrait QC issues (logged for review): ${portraitQC.issues.join('; ')}`);
+    if (!portraitQC.coherent && portraitQC.issues.length > 0) {
+      const issueHint = portraitQC.issues.join('. ');
+      console.log(`  Portrait QC: Retrying (issues: ${issueHint})`);
+      progress('asset', { sequenceIndex: seqIndex, asset: 'portraitQC', status: 'generating', issues: portraitQC.issues });
+
+      await sleep(15000); // Rate limit pause
+
+      try {
+        // Regenerate base portrait with issue hint
+        const portraitDesc = isDM
+          ? 'Hooded mysterious sage storyteller, face partially obscured by deep hood, warm wise eyes visible in shadow, dark flowing robes, aged hands. Fantasy RPG dungeon master narrator character. Warm candlelight from below illuminating chin and lower face.'
+          : charCard
+            ? `${charCard.visualDescription} ${seq.portraitDescription || ''}`
+            : (seq.portraitDescription || extractCharacterDescription(rawSpeaker, direction));
+
+        portrait = await regeneratePortrait(
+          speaker,
+          portraitDesc,
+          issueHint,
+          { savePath: join(assetsDir, 'portrait.png') }
+        );
+        result.cost += 0.04;
+
+        // Regenerate mouth variants from new portrait
+        await sleep(15000);
+        mouthVariants = await generateMouthVariants(portrait.buffer, portrait.mimeType, { saveDir: assetsDir });
+        result.cost += mouthVariants.length * 0.04;
+
+        console.log(`  Portrait QC: Retry complete`);
+        progress('asset', { sequenceIndex: seqIndex, asset: 'portraitQC', status: 'complete', retried: true });
+      } catch (regenErr) {
+        console.warn(`  Portrait QC: Retry failed (${regenErr.message}), using original`);
+        progress('asset', { sequenceIndex: seqIndex, asset: 'portraitQC', status: 'complete', retried: false, error: regenErr.message });
+      }
     }
+
+    // Cache for reuse in later sequences (store portraitDescription for expression comparison)
+    characterCache.set(speaker, { portrait, mouthVariants, portraitDescription: seq.portraitDescription || '' });
   }
 
   // ── Generate or reuse background ──
@@ -922,6 +1050,23 @@ async function generateDialogueSequence(seq, seqDir, characterCache, styleRef, d
       { savePath: join(assetsDir, 'background.png') }
     );
     result.cost += 0.04;
+
+    // ── Background QC for newly generated dialogue backgrounds ──
+    if (sceneContext || bgDesc) {
+      const bgQC = await checkBackgroundAccuracy(bg.buffer, bg.mimeType, sceneContext, bgDesc);
+      if (!bgQC.accurate && bgQC.shouldRetry) {
+        const issueHint = bgQC.issues.join('. ');
+        console.log(`  Dialogue bg QC: Retrying (issues: ${issueHint})`);
+        await sleep(15000);
+        try {
+          bg = await regenerateBackground(bgDesc, seq.backgroundMood || 'neutral', issueHint, { savePath: join(assetsDir, 'background.png') });
+          result.cost += 0.04;
+        } catch (regenErr) {
+          console.warn(`  Dialogue bg QC: Retry failed (${regenErr.message}), using original`);
+        }
+      }
+    }
+
     result.assets.push(join(assetsDir, 'background.png'));
     result.backgroundBase64 = bg.base64;
     result.backgroundMimeType = bg.mimeType;
@@ -1126,9 +1271,10 @@ async function generateActionSequence(seq, seqDir, styleRef, opts) {
 /**
  * Generate assets for an establishing shot sequence.
  * Produces: just a background (no portrait, no dialogue).
+ * Includes background QC check + retry (max 1 retry).
  */
 async function generateEstablishingSequence(seq, seqDir, styleRef, opts) {
-  const { progress, isCancelled, seqIndex, totalSeqs } = opts;
+  const { progress, isCancelled, seqIndex, totalSeqs, sceneContext } = opts;
   const assetsDir = join(seqDir, 'assets');
 
   const result = {
@@ -1147,12 +1293,50 @@ async function generateEstablishingSequence(seq, seqDir, styleRef, opts) {
   await sleep(15000);
 
   const bgDesc = seq.backgroundDescription || `wide establishing shot, fantasy scene, ${seq.backgroundMood || 'neutral'} atmosphere, cinematic composition`;
-  const bg = await generateSceneBackground(
+  let bg = await generateSceneBackground(
     bgDesc,
     seq.backgroundMood || 'neutral',
     { savePath: join(assetsDir, 'background.png') }
   );
   result.cost += 0.04;
+
+  // ── Background QC check ──
+  if (sceneContext || bgDesc) {
+    progress('asset', { sequenceIndex: seqIndex, asset: 'backgroundQC', status: 'generating' });
+
+    const qcResult = await checkBackgroundAccuracy(
+      bg.buffer,
+      bg.mimeType,
+      sceneContext,
+      bgDesc
+    );
+
+    if (!qcResult.accurate && qcResult.shouldRetry) {
+      // Retry once with issue feedback
+      const issueHint = qcResult.issues.join('. ');
+      console.log(`  Establishing shot QC: Retrying (issues: ${issueHint})`);
+
+      await sleep(15000); // Rate limit pause
+
+      try {
+        bg = await regenerateBackground(
+          bgDesc,
+          seq.backgroundMood || 'neutral',
+          issueHint,
+          { savePath: join(assetsDir, 'background.png') }
+        );
+        result.cost += 0.04;
+        console.log(`  Establishing shot QC: Retry complete`);
+      } catch (regenErr) {
+        console.warn(`  Establishing shot QC: Retry failed (${regenErr.message}), using original`);
+      }
+
+      progress('asset', { sequenceIndex: seqIndex, asset: 'backgroundQC', status: 'complete', retried: true, issues: qcResult.issues });
+    } else {
+      progress('asset', { sequenceIndex: seqIndex, asset: 'backgroundQC', status: 'complete', retried: false });
+    }
+  }
+
   result.assets.push(join(assetsDir, 'background.png'));
   result.backgroundBase64 = bg.base64;
   result.backgroundMimeType = bg.mimeType;
@@ -1272,7 +1456,7 @@ async function generateReactionSequence(seq, seqDir, characterCache, styleRef, d
  * Uses a hooded sage narrator portrait with mouth variants, cached globally.
  */
 async function generateDMDescriptionSequence(seq, seqDir, characterCache, styleRef, direction, opts) {
-  const { progress, isCancelled, seqIndex, totalSeqs, reusedBg } = opts;
+  const { progress, isCancelled, seqIndex, totalSeqs, reusedBg, sceneContext } = opts;
   const assetsDir = join(seqDir, 'assets');
 
   const result = {
@@ -1360,6 +1544,23 @@ async function generateDMDescriptionSequence(seq, seqDir, characterCache, styleR
       { savePath: join(assetsDir, 'background.png') }
     );
     result.cost += 0.04;
+
+    // ── Background QC for newly generated DM backgrounds ──
+    if (sceneContext || bgDesc) {
+      const bgQC = await checkBackgroundAccuracy(bg.buffer, bg.mimeType, sceneContext, bgDesc);
+      if (!bgQC.accurate && bgQC.shouldRetry) {
+        const issueHint = bgQC.issues.join('. ');
+        console.log(`  DM bg QC: Retrying (issues: ${issueHint})`);
+        await sleep(15000);
+        try {
+          bg = await regenerateBackground(bgDesc, seq.backgroundMood || 'neutral', issueHint, { savePath: join(assetsDir, 'background.png') });
+          result.cost += 0.04;
+        } catch (regenErr) {
+          console.warn(`  DM bg QC: Retry failed (${regenErr.message}), using original`);
+        }
+      }
+    }
+
     result.assets.push(join(assetsDir, 'background.png'));
     result.backgroundBase64 = bg.base64;
     result.backgroundMimeType = bg.mimeType;

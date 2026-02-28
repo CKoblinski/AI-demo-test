@@ -1,0 +1,116 @@
+{
+  "campaignId": "call-of-the-netherdeep",
+  "title": "Call of the Netherdeep",
+  "system": "D&D 5e",
+  "setting": "Exandria (Critical Role setting)",
+  "description": "A heavily remixed Call of the Netherdeep campaign focused on the player characters. The party is drawn into the mystery of Alyxian the Apotheon — a forgotten hero trapped in an underwater prison of living darkness. As they pursue the Jewel of Three Prayers across Exandria, they must confront ruidium corruption, rival adventurers, and the question of whether a god's champion can be saved or must be destroyed.",
+
+  "worldConcepts": [
+    {
+      "id": "ruidium",
+      "name": "Ruidium",
+      "type": "material",
+      "visualDescription": "A crystalline corruption that spreads like a living disease. Deep crimson-red crystals with an inner glow that pulses like a slow heartbeat. Veins of ruidium spread across surfaces like cracked glass filled with molten ruby. When it corrupts living things, red crystal growths erupt through skin and armor, and the victim's eyes turn solid crimson. The crystals emit a faint, unsettling hum. In pixel art: jagged red crystalline growths with hot-white highlights at stress points, spreading tendrils of deep red.",
+      "narrativeRole": "The primary corruption force — tied to Alyxian's despair. Ruidium-corrupted creatures and objects are dangerous and tragic."
+    },
+    {
+      "id": "jewel-of-three-prayers",
+      "name": "Jewel of Three Prayers",
+      "type": "artifact",
+      "visualDescription": "A multi-faceted gemstone that shifts between three colors depending on which prayer it channels: warm amber-gold (Avandra's prayer of hope), cool sapphire-blue (Sehanine's prayer of compassion), and deep emerald-green (Corellon's prayer of change). The jewel floats slightly above the palm when held, surrounded by a soft luminous aura. Faint ethereal chains seem to trail from it into nothingness. In pixel art: a floating faceted gem with a color-shifting glow, 2-3 pixel aura outline, thin trailing light threads below.",
+      "narrativeRole": "The MacGuffin — a divine artifact connected to Alyxian that guides the party toward the Netherdeep."
+    },
+    {
+      "id": "alyxian",
+      "name": "Alyxian the Apotheon",
+      "type": "npc",
+      "visualDescription": "A fallen divine champion in three possible forms: (1) THE HERO — a noble warrior in battered golden armor, scarred but radiant, with a halo of fading divine light and weary but compassionate eyes; (2) THE TORMENTED — the same figure but twisted, golden armor cracked and shot through with ruidium corruption, face contorted in anguish, divine light flickering and unstable; (3) THE ABOLETH FORM — a massive aberrant shape, the hero's silhouette barely visible inside a grotesque mass of tentacles, ruidium crystals, and dark water, with one human eye still visible and desperate. In pixel art: emphasize the contrast between golden divine light and crimson ruidium corruption.",
+      "narrativeRole": "The tragic antagonist/savior figure. A hero of the Calamity who prayed to three gods and was answered — but has been imprisoned in the Netherdeep for centuries, his despair feeding the ruidium."
+    },
+    {
+      "id": "the-calamity",
+      "name": "The Calamity",
+      "type": "event",
+      "visualDescription": "An ancient apocalyptic war between gods. Visualize as: scorched battlefields stretching to the horizon under a sky torn open with rifts of divine energy. Massive divine figures clashing above ruined cities. The ground is cracked and burning, with fragments of temples and civilization scattered like broken toys. Everything is rendered in extremes — blinding gold light versus abyssal darkness, with no middle ground. In pixel art: use high-contrast silhouettes of towering figures against a shattered sky, warm destruction palette (deep orange, black, white-hot).",
+      "narrativeRole": "Ancient backstory — the war that created Alyxian's imprisonment. Referenced in visions and lore moments."
+    }
+  ],
+
+  "locations": [
+    {
+      "id": "jigow",
+      "name": "Jigow",
+      "visualDescription": "A vibrant coastal frontier town built along muddy riverbanks in the jungles of Xhorhas. Structures are a chaotic mix of wooden stilts, woven reed walls, and colorful canvas awnings in oranges, teals, and yellows. Goblin and orc vendors hawk wares from open-air stalls strung with paper lanterns. The air is thick with humidity and the smell of spiced food. Festival energy — drums, competitions, crowds. At night, bioluminescent fungi along the riverbanks cast an eerie blue-green glow. In pixel art: warm jungle palette (deep greens, rich browns, bright accent colors), lantern glow, wooden platforms over water.",
+      "region": "Xhorhas",
+      "mood": "festive, frontier, humid"
+    },
+    {
+      "id": "bazzoxan",
+      "name": "Bazzoxan",
+      "visualDescription": "A besieged military outpost built into and around the ruins of an ancient demonic temple. Dark basalt walls scarred with claw marks tower over muddy streets patrolled by exhausted Aurora Watch soldiers in dented purple-and-silver armor. The Betrayers' Rise — a massive ziggurat of black stone — looms over everything, its surface crawling with faintly glowing abyssal runes. The sky is perpetually overcast with sickly gray-green clouds. Demon attacks are frequent — the walls show fresh damage alongside ancient scars. In pixel art: dark palette (charcoal, deep purple, sickly green highlights), imposing architecture, military tension, ominous ziggurat silhouette.",
+      "region": "Xhorhas",
+      "mood": "besieged, grim, militaristic"
+    },
+    {
+      "id": "ankharels",
+      "name": "Ank'Harel",
+      "visualDescription": "A magnificent desert metropolis of white sandstone and gold-leafed domes shimmering under a relentless sun. Tiered districts rise from bustling bazaars at the base to opulent palace spires at the summit. Narrow alleyways overflow with silk merchants, spice traders, and scholars debating in open courtyards. Crystal-clear aqueducts channel water through the city in defiance of the surrounding desert. The Consortium of the Vermilion Dream operates from shadowed back rooms — corruption beneath beauty. At night, thousands of oil lamps transform the white stone into warm amber. In pixel art: warm desert palette (sand-white, gold, terracotta, deep blue sky), ornate architecture, market bustle, dramatic light/shadow contrast.",
+      "region": "Marquet",
+      "mood": "opulent, scholarly, desert-bright, shadowy intrigue"
+    },
+    {
+      "id": "cael-morrow",
+      "name": "Cael Morrow",
+      "visualDescription": "A drowned ancient city submerged beneath the oasis at the heart of Ank'Harel. Massive stone columns and temple facades covered in barnacles and aquatic growth loom in murky blue-green water. Schools of bioluminescent fish drift between ruined archways. Ruidium corruption spreads across surfaces like red coral, pulsing with inner light. The architecture is impossibly grand — built for beings larger than humans. Air pockets trapped in domed chambers create eerie, echoing spaces where water drips from ancient ceilings. In pixel art: deep underwater palette (navy blue, teal, dark green), ruidium red accents, massive ruined architecture silhouettes, bioluminescent particles floating in water.",
+      "region": "Beneath Ank'Harel",
+      "mood": "submerged, ancient, corrupted, awe-inspiring"
+    },
+    {
+      "id": "netherdeep-grottoes",
+      "name": "The Netherdeep — Outer Grottoes",
+      "visualDescription": "The entrance to Alyxian's prison. A network of underwater caverns where the water itself seems alive — thick, dark, and resisting movement like swimming through cold oil. The cave walls are smooth and organic, as if carved by something living. Ruidium crystals cluster in corners, casting crimson light that makes shadows dance. Strange coral-like growths pulse with a rhythmic heartbeat. The deeper you go, the more the walls seem to breathe. Occasional visions of Alyxian's memories flash through the water like projected images. In pixel art: very dark base palette (near-black blues and purples), ruidium red glow as primary light source, organic curved surfaces, floating memory-fragments as translucent overlays.",
+      "region": "The Netherdeep",
+      "mood": "oppressive, living, heartbeat-pulse, alien"
+    },
+    {
+      "id": "netherdeep-vents",
+      "name": "The Netherdeep — Abyssal Vents",
+      "visualDescription": "Deeper chambers where the Netherdeep's true nature becomes clear — this is a living place shaped by Alyxian's psyche. Thermal vents blast superheated water upward in columns of bubbles and sediment. The terrain shifts between crystallized memories — fragments of battlefields from the Calamity frozen in dark crystal, distorted faces of fallen soldiers visible in the walls. Ruidium corruption is everywhere, thick as tree roots, pulsing faster as you approach the heart. The water is warm and tastes of iron. In pixel art: warmer dark palette (deep reds, blacks, heated orange vents), crystallized scene fragments in walls, heavy ruidium growth, sense of descending deeper.",
+      "region": "The Netherdeep",
+      "mood": "descending, memories, heat, corruption intensifying"
+    },
+    {
+      "id": "netherdeep-heart",
+      "name": "The Netherdeep — Heart of Despair",
+      "visualDescription": "The innermost chamber where Alyxian is imprisoned. An impossibly vast cavern — the ceiling lost in darkness above, the floor a plateau of fused ruidium crystal. At the center, Alyxian's current form is suspended in a column of dark water and crimson light, chains of solidified despair anchoring him in place. The chamber resonates with a deep, subsonic hum — the sound of centuries of anguish. Divine light and ruidium corruption war visibly across every surface, gold versus crimson in frozen lightning patterns. This is a place where reality is thin and emotions become physical. In pixel art: maximum contrast palette — pure gold divine light versus deep crimson ruidium, central suspended figure, radiating chain-lines, vast dark space, the emotional climax rendered as visual spectacle.",
+      "region": "The Netherdeep",
+      "mood": "climactic, divine, tragic, awe, despair vs hope"
+    },
+    {
+      "id": "astral-sea",
+      "name": "The Astral Sea",
+      "visualDescription": "An infinite expanse of shimmering silver mist where dead gods drift as continent-sized corpses. No gravity in the conventional sense — movement is driven by thought. The 'sky' in every direction is a luminous silver-white void with distant colored nebulae (deep purples, blues, golds) drifting like slow clouds. Occasionally, massive structures pass in the distance — dead divine realms, crystallized memories, or living constructs of pure thought. The light has no source — everything casts soft shadows in every direction. In pixel art: silver-white base with soft purple and blue nebula gradients, floating debris, ethereal luminosity, no ground plane — everything drifts.",
+      "region": "Outer Planes",
+      "mood": "vast, ethereal, silver, weightless, divine-scale"
+    }
+  ],
+
+  "factions": [
+    {
+      "id": "aurora-watch",
+      "name": "Aurora Watch",
+      "visualDescription": "Military order of the Kryn Dynasty. Soldiers in dented but well-maintained plate armor with purple-and-silver heraldry. Cloaks are deep indigo. Mostly drow (dark purple-gray skin, white hair) but diverse. Battle-hardened, tired, disciplined. In pixel art: dark purple armor with silver trim highlights, indigo cloaks."
+    },
+    {
+      "id": "consortium-vermilion",
+      "name": "Consortium of the Vermilion Dream",
+      "visualDescription": "A shadowy organization in Ank'Harel that deals in ruidium. Members wear fine clothing with subtle crimson accents — a red pin, a garnet ring, vermilion thread in their robes. Outwardly respectable merchants and scholars; privately dangerous and corrupted. Their meeting rooms are opulent but with unsettling ruidium artifacts on display. In pixel art: well-dressed NPCs with red accent details, contrast between public respectability and private menace."
+    }
+  ],
+
+  "metadata": {
+    "createdAt": "2026-02-28",
+    "source": "DM-provided campaign overview + Call of the Netherdeep source material",
+    "notes": "This campaign is heavily remixed. Locations and concepts are canonical but the narrative focus is on the player characters, not the published adventure's strict plot."
+  }
+}

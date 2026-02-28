@@ -5,6 +5,9 @@ import { exportAnimation } from './export-animation.js';
 import { findMatch, getAnimationHtml, listAnimations } from './library.js';
 import { buildPixelScene, buildMomentSequences } from './pixel-art-scene-builder.js';
 import { runDirectorPipeline } from './sequence-director.js';
+import { migrateFromCharactersJson, extractEntities } from './knowledge.js';
+import { generateSessionSummary } from './session-summary.js';
+import { sanitizeStoryboardDescriptions } from './prompt-sanitizer.js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync, cpSync } from 'fs';
 import { join, resolve } from 'path';
 import archiver from 'archiver';
@@ -34,7 +37,11 @@ const INTER_ANIMATION_DELAY_MS = 35000; // 35s between API calls to stay under r
  * Create a new session from an uploaded VTT file.
  */
 export function createSession(vttPath, userContext = '') {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const now = new Date();
+  const dateStr = now.toISOString().replace(/T/, '_').replace(/:/g, '-').replace(/\..+/, '');
+  // e.g. "2026-02-27_14-30-05"
+  const shortRand = Math.random().toString(36).slice(2, 6);
+  const id = `${dateStr}_${shortRand}`;
   const outDir = join('output', `session_${id}`);
   mkdirSync(join(outDir, 'session-data'), { recursive: true });
 
@@ -49,7 +56,9 @@ export function createSession(vttPath, userContext = '') {
     progress: { message: 'Uploaded', percent: 0 },
     parsedSession: null,
     highlights: null,
+    sessionSummary: null,
     segments: null,
+    campaignIds: null,  // null = load all campaigns, [] = none, ['id'] = specific
     estimatedMinutes: null,
   };
 
@@ -76,6 +85,7 @@ export function listSessions() {
     error: s.error,
     progress: s.progress,
     segmentCount: s.segments?.length || 0,
+    hasSessionSummary: !!s.sessionSummary,
   }));
 }
 
@@ -123,11 +133,20 @@ export async function runAnalysis(sessionId) {
     const sessionDataPath = join(session.outDir, 'session-data', 'session.json');
     writeFileSync(sessionDataPath, JSON.stringify(parsed, null, 2));
 
-    session.progress = { message: `Finding highlight moments (${parsed.cues.length} cues)...`, percent: 30 };
+    session.progress = { message: `Finding highlights + summarizing session (${parsed.cues.length} cues)...`, percent: 30 };
     saveState(session);
 
-    // Find highlights
-    const highlights = await findHighlights(parsed, { userContext: session.userContext });
+    // Run highlight finding AND session summary in parallel
+    // Session summary analyzes the DM's recap (~50 cues) — fast and cheap
+    // This adds zero wall-clock time since both run concurrently
+    const [highlights, sessionSummary] = await Promise.all([
+      findHighlights(parsed, { userContext: session.userContext }),
+      generateSessionSummary(parsed, { campaignIds: session.campaignIds }).catch(err => {
+        // Non-fatal — log and continue without summary
+        console.warn(`Session summary failed (non-fatal): ${err.message}`);
+        return null;
+      }),
+    ]);
 
     const highlightsPath = join(session.outDir, 'session-data', 'highlights.json');
     writeFileSync(highlightsPath, JSON.stringify({
@@ -137,7 +156,34 @@ export async function runAnalysis(sessionId) {
       highlights,
     }, null, 2));
 
+    // Save session summary if generated
+    if (sessionSummary) {
+      const summaryPath = join(session.outDir, 'session-data', 'session-summary.json');
+      writeFileSync(summaryPath, JSON.stringify(sessionSummary, null, 2));
+      console.log(`Session summary saved (${Object.keys(sessionSummary.properNounTranslations || {}).length} proper nouns translated)`);
+    }
+
     session.highlights = highlights;
+    session.sessionSummary = sessionSummary;
+
+    // ── Auto-entity extraction (Knowledge System) ──
+    try {
+      // Ensure characters.json is migrated to knowledge base on first run
+      migrateFromCharactersJson();
+
+      // Extract new NPCs/locations/creatures from DM lines
+      session.progress = { message: 'Extracting entities from transcript...', percent: 40 };
+      saveState(session);
+
+      const newEntities = await extractEntities(parsed.cues, { sessionId: session.id });
+      if (newEntities.length > 0) {
+        session.extractedEntities = newEntities;
+        console.log(`Extracted ${newEntities.length} new entities from transcript`);
+      }
+    } catch (entityErr) {
+      // Non-fatal — log and continue
+      console.warn(`Entity extraction failed (non-fatal): ${entityErr.message}`);
+    }
 
     // Build segments with nested animations
     const segments = highlights.map((h, i) => {
@@ -421,6 +467,7 @@ export async function runDirector(sessionId, momentIndex, direction = '') {
       direction,
       cues: session.parsedSession?.cues || [],
       sceneContext: session.sceneContext || null,  // Reuse cached scene context if same moment
+      sessionSummary: session.sessionSummary || null,
       onProgress: (step, message) => {
         const percentMap = {
           scene_context: 52,
@@ -501,6 +548,25 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
     session.progress = { message: `Generating ${seqCount} sequences...`, percent: 55 };
     saveState(session);
 
+    // ─── QA-1: Prompt Sanitizer ───
+    // Catch raw proper nouns in description fields before they reach Gemini.
+    // Zero cost — pure string matching. The Director is instructed to use visual
+    // translations, but this validates it actually did.
+    const translations = session.sessionSummary?.properNounTranslations || {};
+    if (Object.keys(translations).length > 0 && session.storyboard?.plan?.sequences) {
+      const sanitizerReport = sanitizeStoryboardDescriptions(session.storyboard, translations);
+      if (sanitizerReport.totalReplacements > 0) {
+        console.log(`  Prompt Sanitizer: ${sanitizerReport.totalReplacements} substitution(s) made:`);
+        for (const sub of sanitizerReport.substitutions) {
+          console.log(`    → seq ${sub.order} [${sub.field}]: "${sub.noun}" replaced`);
+        }
+        // Save the updated storyboard with sanitized descriptions
+        saveState(session);
+      } else {
+        console.log('  Prompt Sanitizer: All descriptions clean — no raw proper nouns detected');
+      }
+    }
+
     try {
       const result = await buildMomentSequences({
         storyboard: session.storyboard,
@@ -508,6 +574,7 @@ export async function runPixelGeneration(sessionId, momentIndex, direction = '')
         direction,
         cues: session.parsedSession?.cues || [],
         outDir: sceneDir,
+        sceneContext: session.sceneContext || session.storyboard?.sceneContext || null,
         checkCancelled: () => session.cancelled === true,
         onProgress: (step, data) => {
           if (step === 'plan') {
