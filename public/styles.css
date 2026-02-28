@@ -2176,3 +2176,88 @@ textarea:focus { outline: none; border-color: var(--accent); }
   color: var(--text-dim);
   font-size: 0.7rem;
 }
+
+/* ═══════════════════════════════════════
+   Error State — Analyzing + Generating
+   ═══════════════════════════════════════ */
+
+.error-state {
+  text-align: center;
+  padding: 32px 16px;
+  animation: errorFadeIn 0.4s ease;
+}
+
+@keyframes errorFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.error-icon {
+  font-size: 3rem;
+  margin-bottom: 12px;
+  filter: drop-shadow(0 0 12px rgba(255, 68, 68, 0.5));
+}
+
+.error-title {
+  color: var(--error);
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.error-detail {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  margin-bottom: 24px;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.5;
+}
+
+.error-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.error-actions .btn {
+  padding: 10px 24px;
+  border-radius: var(--radius);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.error-actions .btn-primary {
+  background: var(--accent);
+  color: #000;
+}
+.error-actions .btn-primary:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 0 16px rgba(200, 160, 48, 0.3);
+}
+
+.error-actions .btn-secondary {
+  background: var(--surface-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.error-actions .btn-secondary:hover {
+  background: var(--border);
+}
+
+/* Progress bar turns red on failure */
+.progress-bar.error .progress-fill {
+  background: var(--error);
+  box-shadow: 0 0 10px rgba(255, 68, 68, 0.4);
+}
+
+/* Status card error border glow */
+.status-card.error-active {
+  border-color: rgba(255, 68, 68, 0.3);
+  box-shadow: 0 0 30px rgba(255, 68, 68, 0.08);
+}

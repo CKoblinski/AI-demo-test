@@ -293,6 +293,46 @@ app.post('/api/sessions/:id/generate', async (req, res) => {
 });
 
 // Cancel in-progress generation
+// Retry a failed session (re-run from the point of failure)
+app.post('/api/sessions/:id/retry', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  if (session.stage !== 'failed') {
+    return res.status(400).json({ error: `Cannot retry in stage: ${session.stage}. Must be failed.` });
+  }
+
+  const wasGeneration = (session.progress?.message || '').toLowerCase().startsWith('generation failed');
+
+  if (wasGeneration && session.highlights && session.selectedMoment != null) {
+    // Re-run generation — analysis data is still intact
+    session.stage = 'generating';
+    session.error = null;
+    session.cancelled = false;
+    session.progress = { message: 'Retrying generation...', percent: 0 };
+
+    runPixelGeneration(session.id).catch(err => {
+      console.error(`Retry generation failed for session ${session.id}:`, err.message);
+    });
+
+    res.json({ message: 'Retry generation started', stage: session.stage });
+  } else {
+    // Re-run full analysis
+    session.stage = 'uploaded';
+    session.error = null;
+    session.progress = { message: 'Retrying analysis...', percent: 0 };
+    session.highlights = null;
+    session.sessionSummary = null;
+    session.segments = null;
+
+    runAnalysis(session.id).catch(err => {
+      console.error(`Retry analysis failed for session ${session.id}:`, err.message);
+    });
+
+    res.json({ message: 'Retry analysis started', stage: session.stage });
+  }
+});
+
 app.post('/api/sessions/:id/cancel', (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found' });

@@ -164,12 +164,113 @@ function updateUI(session) {
 
     case 'failed':
       stopPolling();
-      showScreen('analyzing');
-      document.getElementById('analyze-message').textContent = session.progress.message || 'Something went wrong';
-      document.querySelector('.spinner').style.display = 'none';
+      showFailedState(session);
       break;
   }
 }
+
+// ── Error / Failed State ──
+
+function showFailedState(session) {
+  const msg = session.progress?.message || session.error || 'Something went wrong';
+  const isGenFailure = msg.toLowerCase().startsWith('generation failed');
+
+  if (isGenFailure) {
+    // Show error on the generating screen
+    showScreen('generating');
+    document.getElementById('gen-error-title').textContent = 'Generation Failed';
+    document.getElementById('gen-error-detail').textContent = session.error || msg;
+    document.getElementById('gen-error').style.display = '';
+    // Hide normal generating UI elements
+    document.querySelector('#screen-generating h2').style.display = 'none';
+    document.querySelector('#screen-generating .gen-intro').style.display = 'none';
+    document.getElementById('gen-steps').style.display = 'none';
+    document.getElementById('gen-sequences').style.display = 'none';
+    document.querySelector('#screen-generating .gen-actions').style.display = 'none';
+    // Turn progress bar red
+    const bar = document.querySelector('#screen-generating .progress-bar');
+    if (bar) bar.classList.add('error');
+  } else {
+    // Show error on the analyzing screen
+    showScreen('analyzing');
+    const statusCard = document.querySelector('#screen-analyzing .status-card');
+    if (statusCard) statusCard.classList.add('error-active');
+    // Hide normal analyzing elements
+    document.querySelector('#screen-analyzing .spinner').style.display = 'none';
+    document.getElementById('analyze-message').style.display = 'none';
+    document.getElementById('analyze-estimate').style.display = 'none';
+    // Turn progress bar red
+    const bar = document.querySelector('#screen-analyzing .progress-bar');
+    if (bar) bar.classList.add('error');
+    // Show error panel
+    document.getElementById('analyze-error-title').textContent = 'Analysis Failed';
+    document.getElementById('analyze-error-detail').textContent = session.error || msg;
+    document.getElementById('analyze-error').style.display = '';
+  }
+}
+
+function clearFailedState() {
+  // Reset analyzing screen
+  document.querySelector('#screen-analyzing .spinner').style.display = '';
+  document.getElementById('analyze-message').style.display = '';
+  document.getElementById('analyze-message').textContent = 'Analyzing transcript...';
+  document.getElementById('analyze-estimate').style.display = '';
+  document.getElementById('analyze-error').style.display = 'none';
+  const analyzeBar = document.querySelector('#screen-analyzing .progress-bar');
+  if (analyzeBar) analyzeBar.classList.remove('error');
+  document.getElementById('analyze-progress').style.width = '0%';
+  const statusCard = document.querySelector('#screen-analyzing .status-card');
+  if (statusCard) statusCard.classList.remove('error-active');
+
+  // Reset generating screen
+  document.querySelector('#screen-generating h2').style.display = '';
+  document.querySelector('#screen-generating .gen-intro').style.display = '';
+  document.getElementById('gen-steps').style.display = '';
+  document.querySelector('#screen-generating .gen-actions').style.display = '';
+  document.getElementById('gen-error').style.display = 'none';
+  const genBar = document.querySelector('#screen-generating .progress-bar');
+  if (genBar) genBar.classList.remove('error');
+  document.getElementById('gen-progress').style.width = '0%';
+}
+
+async function retrySession() {
+  if (!currentSessionId) return;
+  clearFailedState();
+  try {
+    const res = await fetch(`/api/sessions/${currentSessionId}/retry`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Retry failed: ${data.error}`);
+      return;
+    }
+    startPolling();
+  } catch (err) {
+    alert(`Retry failed: ${err.message}`);
+  }
+}
+
+function backToUpload() {
+  clearFailedState();
+  stopPolling();
+  currentSessionId = null;
+  showScreen('upload');
+}
+
+function backToStoryboard() {
+  clearFailedState();
+  if (cachedSession) {
+    showScreen('storyboard');
+    renderStoryboard(cachedSession);
+  } else {
+    showScreen('upload');
+  }
+}
+
+// Wire up error action buttons
+document.getElementById('analyze-retry-btn')?.addEventListener('click', retrySession);
+document.getElementById('analyze-back-btn')?.addEventListener('click', backToUpload);
+document.getElementById('gen-retry-btn')?.addEventListener('click', retrySession);
+document.getElementById('gen-back-btn')?.addEventListener('click', backToStoryboard);
 
 // ── Moment Selector (Screen 3) ──
 
