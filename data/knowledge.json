@@ -6,10 +6,26 @@
       "name": "Bixie",
       "type": "pc",
       "color": "#4CAF50",
-      "race": "Halfling",
-      "class": "Rogue/Assassin",
+      "race": "Half-Elf",
+      "class": "Ranger/Rogue",
       "visualDescription": "Silver/white-haired halfling woman with an updo hairstyle. Sharp angular features, dark clothing, brown leather gloves. Shrewd calculating eyes with a dangerous intelligence behind them. Small stature but commanding, intimidating presence. Often has arms crossed or hand near a concealed blade.",
       "conditionalFeatures": {},
+      "signatureItems": [
+        {
+          "name": "Longbow",
+          "type": "weapon",
+          "visualDescription": "A well-maintained functional longbow — no ornament, all deadly precision."
+        },
+        {
+          "name": "Daggers",
+          "type": "weapon",
+          "visualDescription": "Multiple concealed daggers in leather armor, quick-draw for close quarters."
+        }
+      ],
+      "keyAbilities": [
+        "Sneak Attack — single precise devastating strike from stealth, extra damage",
+        "Expert Stealth — moves like a shadow, nearly invisible when she wants to be"
+      ],
       "tokenImagePath": "data/tokens/bixie.png",
       "referenceImages": [],
       "firstSeen": null,
@@ -22,10 +38,21 @@
       "name": "Calli",
       "type": "pc",
       "color": "#9C27B0",
-      "race": "Winged humanoid",
-      "class": "Unknown",
+      "race": "Aasimar",
+      "class": "Cleric (Twilight Domain) / Sorcerer (Divine Soul)",
       "visualDescription": "Winged woman with silver curly hair cascading over her shoulders. Large purple and blue iridescent wings spread behind her. Dark dress with green lacing detail at the bodice. Golden bracelets on both wrists. Ethereal, otherworldly beauty with a serene but knowing expression.",
       "conditionalFeatures": {},
+      "signatureItems": [
+        {
+          "name": "Bloodwell Vial",
+          "type": "accessory",
+          "visualDescription": "A small vial of deep crimson liquid on a delicate chain around her neck. Glows faintly when sorcerous magic is channeled."
+        }
+      ],
+      "keyAbilities": [
+        "Twilight Sanctuary — sphere of soft dim twilight-purple light emanates from her, shimmering protective aura",
+        "Healing Word — warm golden divine light flows from her hands to allies"
+      ],
       "tokenImagePath": "data/tokens/calli.png",
       "referenceImages": [],
       "firstSeen": null,
@@ -38,10 +65,22 @@
       "name": "Eas",
       "type": "pc",
       "color": "#2196F3",
-      "race": "Blue-skinned humanoid",
-      "class": "Spellcaster",
+      "race": "Water Genasi",
+      "class": "Bard/Warlock",
       "visualDescription": "Blue-skinned woman with long flowing dark hair. Wears blue robes and draped clothing with elegant folds. Adorned with gold ornate jewelry including layered necklaces and earrings. Can conjure blue magical fire in her hands. Serene and powerful presence, calm intensity in her eyes.",
       "conditionalFeatures": {},
+      "signatureItems": [
+        {
+          "name": "Squid Staff",
+          "type": "weapon",
+          "visualDescription": "A tall staff topped with a carved squid figure, tentacles draping down the shaft. Looks comically silly but radiates potent arcane power. Blue-purple eldritch energy crackles around it when spells are cast."
+        }
+      ],
+      "keyAbilities": [
+        "Eldritch Blast — crackling bolts of blue-purple eldritch energy",
+        "Wall of Force — shimmering translucent barrier",
+        "Spirit Guardians — swirling spectral figures around her"
+      ],
       "tokenImagePath": "data/tokens/eas.png",
       "referenceImages": [],
       "firstSeen": null,
@@ -54,12 +93,24 @@
       "name": "Hodim",
       "type": "pc",
       "color": "#8B0000",
-      "race": "Aasimar",
-      "class": "Paladin",
+      "race": "Human",
+      "class": "Cleric/Paladin",
+      "deity": "Melora, The Wildmother",
       "visualDescription": "Young human-presenting man with brown hair. Clean-shaven, earnest expression. Wears practical armor with a paladin's bearing. Quiet intensity and thoughtfulness. No visible divine features in his normal state.",
       "conditionalFeatures": {
         "wings": "Radiant golden wings manifest ONLY during smites, divine abilities, or dramatically intense divine moments. When wings appear, his eyes glow with divine light."
       },
+      "signatureItems": [
+        {
+          "name": "The Blooming Blade",
+          "type": "weapon",
+          "visualDescription": "A longsword with a living bonsai tree growing as the hilt, intertwined branches forming the crossguard with tiny green leaves. Connected to Melora. Blade glows with divine golden light during smites."
+        }
+      ],
+      "keyAbilities": [
+        "Divine Smite — radiant golden-white light erupts from weapon on hit, nature-themed (vines, leaves, golden warmth)",
+        "Aasimar Wings — radiant golden wings manifest during divine moments, eyes glow white-gold"
+      ],
       "tokenImagePath": "data/tokens/hodim.png",
       "referenceImages": [],
       "firstSeen": null,
@@ -72,10 +123,21 @@
       "name": "Hojberg",
       "type": "pc",
       "color": "#FF9800",
-      "race": "Human",
-      "class": "Warrior",
+      "race": "Dwarf",
+      "class": "Fighter/Monk (Way of the Astral Self)",
       "visualDescription": "Bald, dark-skinned muscular man with a long braided beard. Wears an open dark red robe revealing a broad chest, with a gold belt at the waist. A green-feathered weapon (possibly a glaive or polearm) strapped to his back. Confident, imposing physical presence with a warrior's bearing.",
       "conditionalFeatures": {},
+      "signatureItems": [
+        {
+          "name": "Staff of Striking",
+          "type": "weapon",
+          "visualDescription": "A sturdy staff inscribed with ancient runes that glow faintly blue-white. When ki-empowered strikes land, the runes flare with astral light."
+        }
+      ],
+      "keyAbilities": [
+        "Flurry of Blows — rapid-fire martial strikes, hands and feet blur with speed",
+        "Arms of the Astral Self — spectral translucent blue-white arms manifest around him, striking alongside his physical blows"
+      ],
       "tokenImagePath": "data/tokens/hojberg.png",
       "referenceImages": [],
       "firstSeen": null,
@@ -84,8 +146,88 @@
       ]
     }
   ],
-  "npcs": [],
-  "locations": [],
+  "npcs": [
+    {
+      "id": "correspond-queen",
+      "name": "Correspond Queen",
+      "type": "creature",
+      "visualDescription": "Massive twenty-foot tall fungal creature covered in thick purple fungal armor. Tendrils of purple corruption spread from its body like roots. Emits deafening roars and releases clouds of purple spores.",
+      "referenceImages": [],
+      "firstSeen": "2026-02-28_04-54-27_s3e0",
+      "lastSeen": "2026-02-28_04-54-27_s3e0",
+      "tags": [
+        "correspond",
+        "fungal",
+        "boss",
+        "astral-sea"
+      ],
+      "autoGenerated": true
+    },
+    {
+      "id": "correspond-heartstone",
+      "name": "Correspond Heartstone",
+      "type": "creature",
+      "visualDescription": "A crystallized spore roughly marble-sized, glowing faintly purple with a pulsing rhythm like a heartbeat. The concentrated essence of Correspond corruption.",
+      "referenceImages": [],
+      "firstSeen": "2026-02-28_06-21-36_4qe5",
+      "lastSeen": "2026-02-28_06-21-36_4qe5",
+      "tags": [
+        "correspond",
+        "magical-item",
+        "corruption"
+      ],
+      "autoGenerated": true
+    },
+    {
+      "id": "correspond",
+      "name": "Correspond",
+      "type": "creature",
+      "visualDescription": "Twisted humanoid shapes covered in purple fungal growths. Move in jerky, unnatural ways. Vulnerable to divine radiant energy, which causes them to shriek and burn away.",
+      "referenceImages": [],
+      "firstSeen": "2026-02-28_06-41-17_wyh4",
+      "lastSeen": "2026-02-28_06-41-17_wyh4",
+      "tags": [
+        "fungal",
+        "corrupted",
+        "astral-sea",
+        "collective"
+      ],
+      "autoGenerated": true
+    }
+  ],
+  "locations": [
+    {
+      "id": "astral-sea",
+      "name": "Astral Sea",
+      "type": "location",
+      "visualDescription": "Ethereal plane filled with silver mist. Contains the floating skeletal remains of dead gods drifting through the void. Otherworldly and cosmic in appearance.",
+      "referenceImages": [],
+      "firstSeen": "2026-02-28_04-54-27_s3e0",
+      "lastSeen": "2026-02-28_04-54-27_s3e0",
+      "tags": [
+        "astral",
+        "divine",
+        "realm"
+      ],
+      "autoGenerated": true
+    },
+    {
+      "id": "dead-god-s-ribcage",
+      "name": "Dead God's Ribcage",
+      "type": "location",
+      "visualDescription": "Massive ribcage of a dead god with bones the size of buildings. Pulsing with purple fungal growths that glow faintly. Contains a nest inhabited by Correspond creatures. Golden warmth radiates from bones when divine energy is channeled nearby.",
+      "referenceImages": [],
+      "firstSeen": "2026-02-28_04-54-27_s3e0",
+      "lastSeen": "2026-02-28_04-54-27_s3e0",
+      "tags": [
+        "astral-sea",
+        "divine",
+        "nest",
+        "combat"
+      ],
+      "autoGenerated": true
+    }
+  ],
   "portraits": [
     {
       "id": "bixie_tense_mm5fkd2q",
@@ -106,6 +248,46 @@
       "sessionId": null,
       "quality": 1,
       "createdAt": "2026-02-27T21:56:09.805Z"
+    },
+    {
+      "id": "bixie_dark_mm5rylzx",
+      "entityId": "bixie",
+      "mood": "dark",
+      "description": "Bixie sits in shadow, silver hair in an updo. Sharp angular features calm and composed. Dark clothing blends into shadows. Firelight catches her calculating eyes with dangerous intelligence. Expression serene but chilling.",
+      "imagePath": "data/portraits/bixie_dark_mm5rylzx.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T03:41:56.830Z"
+    },
+    {
+      "id": "bixie_comedic_mm5us3eb",
+      "entityId": "bixie",
+      "mood": "comedic",
+      "description": "Bixie — silver-haired halfling with sharp angular features, wearing dark leather. Sly calculating smirk with raised eyebrow, hand casually resting near a concealed blade. Expression of practical opportunism mixed with subtle amusement.",
+      "imagePath": "data/portraits/bixie_comedic_mm5us3eb.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T05:00:51.636Z"
+    },
+    {
+      "id": "hodim_triumphant_mm5yfxh7",
+      "entityId": "hodim",
+      "mood": "triumphant",
+      "description": "Hodim — intense concentration, looking down at the glowing An ancient golden artifact adorned with intricate divine iconography. When held or channeled through by a divine caster, it erupts with blazing golden-white radiant light. The ring resonates with pure divine energy — antithetical to corruption. When activated, it glows so brightly that the wielder's eyes blaze white-gold. in his hand. Brown hair, earnest expression, practical armor. Determined focus with anticipation.",
+      "imagePath": "data/portraits/hodim_triumphant_mm5yfxh7.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T06:43:22.555Z"
+    },
+    {
+      "id": "narrator_triumphant_mm5yh6yp",
+      "entityId": "narrator",
+      "mood": "triumphant",
+      "description": "Hooded mysterious sage storyteller, face partially obscured by deep hood, warm wise eyes visible in shadow, dark flowing robes, aged hands. Fantasy RPG dungeon master narrator character. Warm candlelight from below illuminating chin and lower face.",
+      "imagePath": "data/portraits/narrator_triumphant_mm5yh6yp.png",
+      "sessionId": null,
+      "quality": 1,
+      "createdAt": "2026-02-28T06:44:21.505Z"
     }
   ]
 }

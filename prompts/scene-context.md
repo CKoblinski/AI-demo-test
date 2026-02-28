@@ -30,6 +30,14 @@ Who is actively involved beyond the main speakers? Allies, bystanders, familiars
 ### DM Descriptions
 Pull any vivid, descriptive language the DM uses about the scene — lighting, atmosphere, sounds, dramatic narration. Quote these directly (with approximate cue IDs if possible). These are gold for visual reference.
 
+### Key Objects & Weapons
+What specific named items, weapons, spells, or artifacts are mentioned or used? Look for:
+- Named weapons ("the Blooming Blade", "Staff of Striking", "Wand of Fireballs")
+- Artifacts or quest items ("the Jewel of Three Prayers", "Ruidium shard")
+- Specific spell effects with visual descriptions from the DM
+- Objects the camera should focus on (items being held, drawn, activated, broken)
+Include any physical descriptions from the transcript.
+
 ### Lead-up
 What happened in the 1-2 minutes before this moment? What triggered it? This helps establish the emotional context.
 
@@ -57,6 +65,9 @@ Return a JSON object:
   ],
   "spatialPositioning": "Party holds the high ground on the ridge. Fey soldiers approaching from below and flanking along the ridge path. Hodim is on the front line engaging the nearest fey soldier in melee.",
   "keyParticipants": ["Hodim (front line, paladin)", "Hojbjerg (nearby, supporting)", "Berwin (fey commander, engaged)"],
+  "keyObjects": [
+    { "name": "Blooming Blade", "description": "Hodim's longsword with a living bonsai tree hilt, glows with divine golden light when channeling smites", "owner": "Hodim" }
+  ],
   "dmDescriptions": [
     { "text": "The blade ignites with radiant light as divine energy courses through the steel", "approxCueId": 160 },
     { "text": "A brilliant flash of golden energy erupts from the point of impact", "approxCueId": 185 }
@@ -73,3 +84,4 @@ Return a JSON object:
 - Quote DM descriptions directly when found — preserve their exact words
 - If something isn't clear from the transcript, make a reasonable inference and note it
 - Keep descriptions concise but visually rich (2-3 sentences each)
+- For keyObjects, always provide visual descriptions even if inferred from D&D lore

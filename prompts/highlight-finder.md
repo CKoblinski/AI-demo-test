@@ -135,6 +135,7 @@ Return a JSON array of 5-7 highlights. Each highlight:
   "visualConcept": "Bixie's portrait over a dark military camp at night. Her expression is calm but menacing. After the dialogue, a close-up of a knife being drawn catches firelight — 3-frame bounce animation.",
   "speakerDescriptionNeeded": ["Bixie"],
   "suggestedBackgroundMood": "dark",
+  "keyObjects": ["knife"],
   "animationSequence": [
     {
       "order": 1,
@@ -170,6 +171,7 @@ Return a JSON array of 5-7 highlights. Each highlight:
 - `visualConcept` — 2-3 sentences describing how to animate this as pixel art. Describe the background mood, what the character portrait should convey, and any action beats.
 - `speakerDescriptionNeeded` — array of character names whose appearance needs to be described by the human (for portrait generation)
 - `suggestedBackgroundMood` — one of: "triumphant", "tense", "mysterious", "dark", "neutral", "comedic"
+- `keyObjects` should reference specific named items, weapons, or artifacts mentioned in or relevant to the moment. Used for close-up subject selection. Can be empty `[]` for purely emotional/dialogue moments. Example: `["Hodim's sword", "the divine ring", "fungal heartstone"]`
 - `animationSequence` MUST have 2-3 items per highlight
 - `durationWeight` values should sum to approximately 1.0
 - At least one animation beat should be a dialogue box. Action beats (bounce animations) are optional but add visual punch.

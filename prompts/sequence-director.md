@@ -129,6 +129,29 @@ When two sequences share the same location/scene, set `reuseBackgroundFrom: <ord
 - Don't try to perfectly capture what happened — create a vibe that accompanies the audio
 - Think JRPG cutscenes: mostly talking heads, then a sudden close-up or action beat that makes the viewer sit up
 
+## Narrative Arc Intelligence
+
+Plan sequences as a **chain of cause and effect**, not isolated beats.
+
+### Visual Cause & Effect
+For each sequence, consider what changed:
+- If a weapon is drawn in sequence 2, it should be visible/relevant in sequence 3
+- If a divine smite fires, the aftermath should show scorched ground, fallen enemies, settling dust — not the pristine pre-battle scene
+- If magic erupts, residual glow and environmental shift should linger
+- Match the visual consequences to the ability's flavor (see Character Reference — Key Abilities)
+
+### Background State Progression
+Backgrounds should evolve across the moment's arc:
+- **Before action**: Scene in its original state — calm, tense, pristine
+- **After action**: Scene showing consequences — smoke, fallen figures, shifted lighting, environmental damage
+
+Do NOT use `reuseBackgroundFrom` across a major action boundary. Generate a new aftermath background. The $0.04 cost is worth it for visual storytelling.
+
+### Character Emotional Progression
+Portrait descriptions should evolve, not repeat:
+- Setup: determined, focused → Action: fierce, channeling power → Aftermath: satisfied, exhausted, triumphant
+- Use `conditionalFeatures` when the moment's intensity warrants it (divine wings during a smite, NOT during casual chat)
+
 ## Timing Rules — JRPG Pacing
 
 Think like an audio engineer arranging speech for a JRPG. Dialogue should feel readable and measured — give the viewer time to absorb each line before the next appears. If a line takes 1.5s to say aloud, give 2s+ of animation time.
@@ -187,7 +210,30 @@ Write background descriptions that are **achievable in pixel art**:
 
 **Composition rule:** The lower ~40% of the frame will be covered by a dialogue box (raised for mobile safe zones). Never place important visual elements (characters, focal points, key details) in the bottom 40%. Design backgrounds with the focal point in the upper 60% of the frame — horizon lines, characters, light sources, and key objects should all sit well above the dialogue box zone.
 
+### Aftermath Backgrounds
+
+When a major action occurs mid-moment (combat, spell, divine event):
+- Sequences BEFORE the action: original scene state
+- Sequences AFTER the action: visual consequences
+  - Combat: broken objects, scorch marks, dust, fallen figures in distance
+  - Divine/magic: residual glow, changed lighting, environmental shift matching the deity's flavor (Melora → golden warmth with sprouting vines; Twilight → soft purple dim light)
+  - Emotional: atmosphere shift reflecting the new mood
+
+Do NOT use `reuseBackgroundFrom` across a major action boundary.
+
 ## Close-up Descriptions
+
+### Choosing the Subject
+
+The close-up should focus on the **most story-relevant visual element**. Priority:
+
+1. **Named signature items from character cards** — If a character's weapon/item is involved, show THAT item with its specific visual details. Use the EXACT description from the character card's `signatureItems`. ("The Blooming Blade — bonsai tree hilt with tiny leaves, blade glowing golden" NOT "a glowing sword")
+2. **Key Objects listed in the context** — Check the "Key Objects & Weapons" section for visually important items
+3. **The specific action's visual effect** — A hand casting a spell shows the spell effect; a shield block shows the impact point. Use `keyAbilities` visual descriptions from character cards for accuracy.
+4. **Character expression at peak emotion** — Eyes wide, tears, teeth gritted — when the emotional beat IS the moment
+5. **Environmental consequence** — The crack in the wall, the portal igniting, the treasure revealed
+
+### Writing the Description
 
 Write close-up descriptions as **3-5 frame progressions** (bounce mode):
 - Frame 1: Starting position
@@ -195,11 +241,13 @@ Write close-up descriptions as **3-5 frame progressions** (bounce mode):
 - Frame 4-5: Peak position
 - Bounce mode plays: 1→2→3→...→N→...→3→2→repeat
 
-**SIMPLICITY IS KEY.** One subject, one motion. Firelight moving across a face. A blade being drawn. Eyes narrowing. A spell igniting in a palm.
+**SIMPLICITY IS KEY.** One subject, one motion.
 
-**Good:** "Close-up of a hand gripping a knife hilt. Frame 2: blade starting to slide out, steel catching orange firelight. Frame 3: knife fully drawn, bright glint on the edge."
+**Good:** "Close-up of a hand gripping the Blooming Blade's bonsai-tree hilt — tiny green leaves on intertwined branches. Frame 2: blade starting to glow with golden divine light. Frame 3: brilliant golden radiance erupts from the blade, leaves shimmering."
 
 **Bad:** "A whole fight scene with multiple characters." (Not achievable)
+
+**CRITICAL:** Never genericize a named item. If the Blooming Blade is in the scene, the close-up shows a bonsai-tree-hilted longsword — not "a sword." If the Squid Staff channels a spell, show tentacle-draped staff with eldritch energy — not "a staff."
 
 ## Impact Effects
 

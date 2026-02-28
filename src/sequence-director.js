@@ -260,16 +260,23 @@ export async function planSequences({ moment, direction, cues, sceneContext, ses
 
     if (relevantChars.length > 0) {
       contextParts.push(`\n## Character Reference`);
-      contextParts.push(`Use these descriptions for portrait prompts. Match colors for dialogue box borders.`);
+      contextParts.push(`Use these descriptions for portrait prompts. Match colors for dialogue box borders. Use signature items and key abilities for close-up and visual effect accuracy.`);
       for (const ch of relevantChars) {
-        let charLine = `- **${ch.name}** (${ch.race}, ${ch.class}) [border color: ${ch.color}]: ${ch.visualDescription}`;
-        if (ch.conditionalFeatures) {
+        contextParts.push(`\n### ${ch.name} (${ch.race}, ${ch.class}) [border color: ${ch.color}]`);
+        contextParts.push(`**Visual:** ${ch.visualDescription}`);
+        if (ch.deity) contextParts.push(`**Deity:** ${ch.deity}`);
+        if (ch.conditionalFeatures && Object.keys(ch.conditionalFeatures).length > 0) {
           const features = Object.entries(ch.conditionalFeatures)
-            .map(([feature, condition]) => `${feature}: ${condition}`)
-            .join('; ');
-          charLine += ` | CONDITIONAL: ${features}`;
+            .map(([f, c]) => `${f}: ${c}`).join('; ');
+          contextParts.push(`**Conditional Features:** ${features}`);
         }
-        contextParts.push(charLine);
+        if (ch.signatureItems && ch.signatureItems.length > 0) {
+          contextParts.push(`**Signature Items:** ${ch.signatureItems
+            .map(i => `${i.name} (${i.type}) — ${i.visualDescription}`).join('; ')}`);
+        }
+        if (ch.keyAbilities && ch.keyAbilities.length > 0) {
+          contextParts.push(`**Key Abilities:** ${ch.keyAbilities.join('; ')}`);
+        }
       }
     }
   }
@@ -311,6 +318,28 @@ export async function planSequences({ moment, direction, cues, sceneContext, ses
     for (const seq of moment.animationSequence) {
       contextParts.push(`- Beat ${seq.order}: ${seq.concept} (${Math.round((seq.durationWeight || 0) * 100)}% of clip)`);
     }
+  }
+
+  // Key Objects & Weapons — merged from highlight finder, scene context, and character signature items
+  const allKeyObjects = [];
+  if (moment.keyObjects) allKeyObjects.push(...moment.keyObjects);
+  if (sceneContext?.keyObjects) {
+    for (const obj of sceneContext.keyObjects) {
+      allKeyObjects.push(`${obj.name}${obj.owner ? ` (${obj.owner})` : ''}: ${obj.description}`);
+    }
+  }
+  // Add signature items from relevant characters
+  for (const ch of characters) {
+    if (ch.signatureItems) {
+      for (const item of ch.signatureItems) {
+        allKeyObjects.push(`${item.name} (${ch.name}'s ${item.type}): ${item.visualDescription}`);
+      }
+    }
+  }
+  if (allKeyObjects.length > 0) {
+    contextParts.push(`\n## Key Objects & Weapons`);
+    contextParts.push(`These are the visually important items in this moment. Prefer these as close-up subjects over generic objects.`);
+    for (const obj of allKeyObjects) contextParts.push(`- ${obj}`);
   }
 
   // User's creative direction
